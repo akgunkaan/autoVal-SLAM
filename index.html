@@ -52,6 +52,47 @@
                             </select>
                         </div>
                         <div class="mb-3">
+                            <label for="wind-speed" class="form-label">Wind Speed:</label>
+                            <select id="wind-speed" class="form-select">
+                                <option value="No">No Wind</option>
+                                <option value="Low">Low Wind</option>
+                                <option value="Medium">Medium Wind</option>
+                                <option value="High">High Wind</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="rainfall-rate" class="form-label">Rainfall:</label>
+                            <select id="rainfall-rate" class="form-select">
+                                <option value="No">No Rain</option>
+                                <option value="Light">Light Rain</option>
+                                <option value="Moderate">Moderate Rain</option>
+                                <option value="Heavy">Heavy Rain</option>
+                                <option value="Violent">Violent Rain</option>
+                                <option value="Cloudburst">Cloudburst</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="snowfall-rate" class="form-label">Snowfall:</label>
+                            <select id="snowfall-rate" class="form-select">
+                                <option value="No">No Snow</option>
+                                <option value="Light">Light Snow</option>
+                                <option value="Moderate">Moderate Snow</option>
+                                <option value="Heavy">Heavy Snow</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="luminosity" class="form-label">Luminosity (Lux):</label>
+                            <input type="number" id="luminosity" class="form-control" value="6000" min="0" max="12000">
+                        </div>
+                        <div class="mb-3">
+                            <label for="particulate-type" class="form-label">Particulate Type:</label>
+                            <input type="text" id="particulate-type" class="form-control" value="none">
+                        </div>
+                        <div class="mb-3">
+                            <label for="particulate-intensity" class="form-label">Particulate Intensity (0-100):</label>
+                            <input type="number" id="particulate-intensity" class="form-control" value="0" min="0" max="100">
+                        </div>
+                        <div class="mb-3">
                             <p>Vehicle Speed: <span id="speed-display" class="fw-bold">Normal</span></p>
                         </div>
                         <div class="mb-3 d-flex justify-content-around">
@@ -59,7 +100,7 @@
                             <button id="add-vehicle-btn" class="btn btn-secondary">Add Vehicle</button>
                         </div>
                         <div class="mb-3 d-flex justify-content-around">
-                            <button id="change-map-btn" class="btn btn-secondary">Change Map (Random Walls)</button>
+                            <button id="change-map-btn" class="btn btn-secondary">Change Map</button>
                             <button id="random-obstacles-btn" class="btn btn-secondary">Add Random Obstacles</button>
                         </div>
                         <div class="mb-3">

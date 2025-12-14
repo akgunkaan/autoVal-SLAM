@@ -17,6 +17,26 @@ The system can be compared to a high-precision orchestra working in harmony:
 -   **Web Browser (Conductor & Stage)**: The browser orchestrates the simulation, runs the Python code via Pyodide, and visualizes the output on the screen.
 -   **JavaScript (Sound Engineer)**: Acts as the glue, connecting the user interface controls to the Python simulation logic running in the background.
 
+## Features and Enhancements
+
+This project has been significantly enhanced to provide a more interactive and comprehensive simulation environment:
+
+-   **Dynamic Map Generation**: The "Change Map" button now generates complex maze-like environments using a Recursive Backtracking algorithm, providing diverse and challenging scenarios for testing obstacle avoidance.
+-   **Random Obstacle Placement**: The "Add Random Obstacles" button populates the map with a random distribution of obstacles and other vehicles, enabling varied simulation setups.
+-   **Backend Obstacle Avoidance Algorithms**:
+    -   Multiple obstacle avoidance algorithms (e.g., Artificial Potential Field, Bug Algorithms, DWA, RRT, DRL) are implemented in Python (`src/autoval_slam/algorithms.py`).
+    -   Users can select an algorithm from the UI, and its logic will drive the vehicle's movement within the simulated environment via Pyodide.
+-   **Operational Design Domain (ODD) Integration**:
+    -   A dedicated Python parser (`src/autoval_slam/odd_parser.py`) processes ODD XML data to define environmental and operational constraints.
+    -   Environmental parameters (e.g., Wind, Rainfall, Snowfall, Illumination, Particulates) are configurable via new UI controls, directly influencing the ODD data.
+    -   A text-based visualization of the parsed ODD data is displayed on the webpage using `src/autoval_slam/odd_visualizer.py`, highlighting the simulation's current operational context.
+-   **Enhanced User Interface**:
+    -   Updated button labels ("Add Obstacle", "Add Vehicle").
+    -   Algorithm selection buttons provide visual feedback for the active algorithm.
+-   **Improved Simulation Core**:
+    -   `main.js` now orchestrates the loading of Python scripts, parsing ODD data, and driving the simulation loop by calling the selected Python algorithm for each movement step.
+    -   Collision detection and event logging have been refined to accurately track interactions with obstacles, walls, and other vehicles.
+
 ## Project Structure
 
 This project is structured as a static web application that leverages Pyodide.
@@ -24,9 +44,12 @@ This project is structured as a static web application that leverages Pyodide.
 -   `index.html`: The main entry point and user interface for the web application.
 -   `style.css`: Provides styling for the web interface.
 -   `main.js`: Contains the core JavaScript logic for loading Pyodide, running Python scripts, and handling user interaction.
--   `src/adcore/sensors.py`: Python module for the 2D LiDAR scanner simulation (runs in the browser).
+-   `src/autoval_slam/sensors.py`: Python module for the 2D LiDAR scanner simulation (runs in the browser).
+-   `src/autoval_slam/odd_parser.py`: Python module for parsing ODD XML data.
+-   `src/autoval_slam/algorithms.py`: Python module containing implementations/stubs for various obstacle avoidance algorithms.
+-   `src/autoval_slam/odd_visualizer.py`: Python module for generating a text-based visualization of ODD data.
 -   `src/adcore/sim.py`: Python module for the older camera simulation (currently not implemented in the web UI).
--   `.github/workflows/deploy.yml`: **(New)** GitHub Actions workflow that automatically deploys the project to GitHub Pages.
+-   `.github/workflows/deploy.yml`: GitHub Actions workflow that automatically deploys the project to GitHub Pages.
 -   `docs/diagrams/`: Contains SVG diagrams explaining the project architecture.
 -   `placeholder.cpp` & `kalman_adv.py`: Skeletons for future C++ and advanced tracking logic.
 

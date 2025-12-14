@@ -15,6 +15,14 @@ const changeMapBtn = document.getElementById("change-map-btn");     // New
 const randomObstaclesBtn = document.getElementById("random-obstacles-btn"); // New
 const vehicle = document.getElementById("vehicle");
 
+// New ODD UI element references
+const windSpeedSelect = document.getElementById("wind-speed");
+const rainfallRateSelect = document.getElementById("rainfall-rate");
+const snowfallRateSelect = document.getElementById("snowfall-rate");
+const luminosityInput = document.getElementById("luminosity");
+const particulateTypeInput = document.getElementById("particulate-type");
+const particulateIntensityInput = document.getElementById("particulate-intensity");
+
 const oddXmlString = `
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <entity xmlns:vc="http://www.w3.org/2007/XMLSchema-versioning" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="ses.xsd" name="ODD">
@@ -158,7 +166,7 @@ async function main() {
 
     // Fetch and load Python source files
     logMessage("Loading Python source files...");
-    const sensorsCode = await (await fetch('src/autoval_slam/sensors.py')).text();
+    const sensorsCode = await (await fetch('src/adcore/sensors.py')).text();
     pyodide.FS.writeFile('/home/pyodide/sensors.py', sensorsCode);
     
     // Load ODD parser
@@ -199,6 +207,7 @@ async function main() {
         `);
         oddDisplayElement.textContent = pyodide.globals.get('odd_viz_string');
         logMessage("ODD visualization displayed.");
+        await updateOddVisualization(); // Initial call to update based on current UI state
     }
 
     // Initialize default algorithm instance in Python
@@ -349,6 +358,59 @@ function getDirectionVector(currentX, currentY, targetX, targetY) {
     return normalizeVector({ x: targetX - currentX, y: targetY - currentY });
 }
 
+// Function to get current ODD data from UI
+function getLiveOddData() {
+    // Create a deep copy to avoid modifying the original parsedOddData
+    const liveOdd = JSON.parse(JSON.stringify(parsedOddData));
+
+    if (!liveOdd.Environment) liveOdd.Environment = {};
+    if (!liveOdd.Environment.Weather) liveOdd.Environment.Weather = {};
+    if (!liveOdd.Environment.Illumination) liveOdd.Environment.Illumination = {};
+    if (!liveOdd.Environment.Particulates) liveOdd.Environment.Particulates = {};
+
+    // Update Weather
+    const currentWeather = weatherSelect.value;
+    liveOdd.Environment.Weather.condition = currentWeather; // Custom field for overall weather
+
+    // Update Wind
+    const windSpeedLevel = windSpeedSelect.value;
+    if (liveOdd.Environment.Weather.Wind && liveOdd.Environment.Weather.Wind[windSpeedLevel]) {
+        liveOdd.Environment.Weather.Wind.current_level = windSpeedLevel;
+        // Optionally, could set a specific speed value if needed for algorithms
+    }
+
+    // Update Rainfall
+    const rainfallRateLevel = rainfallRateSelect.value;
+    if (liveOdd.Environment.Weather.Rainfall && liveOdd.Environment.Weather.Rainfall[rainfallRateLevel]) {
+        liveOdd.Environment.Weather.Rainfall.current_level = rainfallRateLevel;
+    }
+
+    // Update Snowfall
+    const snowfallRateLevel = snowfallRateSelect.value;
+    if (liveOdd.Environment.Weather.Snowfall && liveOdd.Environment.Weather.Snowfall[snowfallRateLevel]) {
+        liveOdd.Environment.Weather.Snowfall.current_level = snowfallRateLevel;
+    }
+
+    // Update Illumination
+    const luminosity = luminosityInput.value;
+    if (liveOdd.Environment.Illumination.Luminosity) {
+        liveOdd.Environment.Illumination.Luminosity.current_value = parseFloat(luminosity);
+    }
+
+    // Update Particulates
+    const particulateType = particulateTypeInput.value;
+    const particulateIntensity = particulateIntensityInput.value;
+    if (liveOdd.Environment.Particulates.Type) {
+        liveOdd.Environment.Particulates.Type.current_value = particulateType;
+    }
+    if (liveOdd.Environment.Particulates.Intensity) {
+        liveOdd.Environment.Particulates.Intensity.current_value = parseFloat(particulateIntensity);
+    }
+    // Note: 'Size' is in XML but not in UI yet, so it won't be updated.
+
+    return liveOdd;
+}
+
 function checkCollision(x, y, objectType = null) {
     const vehicleRect = { x: x, y: y, width: vehicle.offsetWidth, height: vehicle.offsetHeight };
     const objects = getMapObjects();
@@ -407,7 +469,7 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
         const python_current_pos = pyodide.toPy({x: vehiclePos.x, y: vehiclePos.y});
         const python_obstacles = pyodide.toPy(objects.filter(obj => obj.type === 'obstacle'));
         const python_walls = pyodide.toPy(objects.filter(obj => obj.type === 'wall'));
-        const python_odd_data = pyodide.toPy(parsedOddData); // Use global parsedOddData
+        const python_odd_data = pyodide.toPy(getLiveOddData()); // Use live ODD data from UI
 
         // Call the Python algorithm's compute_next_move
         let dx_dy_py = await window.pythonAlgorithmInstance.compute_next_move(
@@ -544,7 +606,7 @@ function updateVehicleSpeed() {
 }
 
 function exportODD() {
-    const weather = weatherSelect.value;
+    const liveOdd = getLiveOddData(); // Get the current live ODD data from UI
     
     // Get all map objects
     const mapObjects = Array.from(map.children).filter(obj => obj.classList.contains('map-object')).map(obj => {
@@ -569,11 +631,21 @@ function exportODD() {
         description: "Operational Design Domain for autoVal-SLAM",
         domain: {
             weather: {
-                condition: weather,
-                precipitation_rate: weather === "Rain" ? "light to moderate" : "none",
-                visibility: weather === "Fog" ? "reduced" : "clear",
+                condition: liveOdd.Environment.Weather.condition || "Clear", // Use live weather
+                wind: liveOdd.Environment.Weather.Wind.current_level || "No",
+                rainfall: liveOdd.Environment.Weather.Rainfall.current_level || "No",
+                snowfall: liveOdd.Environment.Weather.Snowfall.current_level || "No",
+                air_temperature: liveOdd.Environment.Weather.Air_Temperature ? liveOdd.Environment.Weather.Air_Temperature.default : "none" // From static XML
             },
-            road_conditions: weather === "Snow" ? "potentially slippery" : "dry",
+            illumination: {
+                luminosity: liveOdd.Environment.Illumination.Luminosity ? liveOdd.Environment.Illumination.Luminosity.current_value : "none",
+                cloudiness: liveOdd.Environment.Illumination.cloudinessSpec ? liveOdd.Environment.Illumination.cloudinessSpec.options : []
+            },
+            particulates: {
+                type: liveOdd.Environment.Particulates.Type ? liveOdd.Environment.Particulates.Type.current_value : "none",
+                intensity: liveOdd.Environment.Particulates.Intensity ? liveOdd.Environment.Particulates.Intensity.current_value : "none",
+            },
+            road_conditions: liveOdd.Environment.Weather.Snowfall.current_level !== "No" ? "potentially slippery" : "dry", // Derived from live snowfall
             map_objects: mapObjects,
             detected_events: detectedEvents // Add detected events to ODD
         },
@@ -603,6 +675,20 @@ function makeDraggable(element) {
     element.addEventListener('dragend', () => {
         element.classList.remove('dragging');
     });
+}
+
+// Function to update ODD Visualization
+async function updateOddVisualization() {
+    const oddDisplayElement = document.getElementById('odd-display');
+    if (oddDisplayElement && pyodide) {
+        const liveOdd = getLiveOddData();
+        await pyodide.runPythonAsync(`
+            from odd_visualizer import visualize_odd_data
+            import json
+            odd_viz_string = visualize_odd_data(json.loads(json.dumps(${JSON.stringify(liveOdd)})))
+        `);
+        oddDisplayElement.textContent = pyodide.globals.get('odd_viz_string');
+    }
 }
 
 map.addEventListener('dragover', (e) => e.preventDefault());
@@ -640,16 +726,111 @@ function clearMapObjects() {
 
 function changeMap() {
     clearMapObjects();
-    const mapSize = 500;
-    const objectSize = 10;
-    const maxWalls = Math.floor(Math.random() * 10) + 5; // 5 to 14 walls
+    logMessage("Generating maze...");
 
-    for (let i = 0; i < maxWalls; i++) {
-        const x = Math.floor(Math.random() * (mapSize / objectSize)) * objectSize;
-        const y = Math.floor(Math.random() * (mapSize / objectSize)) * objectSize;
-        addDynamicObjectToMap('wall', x, y);
+    const mapSize = MAP_SIZE; // 500px
+    const objectSize = STEP; // 10px
+    const cellSize = objectSize * 2; // 20px for a cell (path + wall/path)
+    const cols = Math.floor(mapSize / cellSize); // Number of cells horizontally
+    const rows = Math.floor(mapSize / cellSize); // Number of cells vertically
+
+    // Initialize grid: all cells unvisited, all walls present
+    const grid = [];
+    for (let r = 0; r < rows; r++) {
+        grid[r] = [];
+        for (let c = 0; c < cols; c++) {
+            grid[r][c] = {
+                visited: false,
+                walls: {
+                    top: true,
+                    right: true,
+                    bottom: true,
+                    left: true
+                }
+            };
+        }
     }
-    logMessage(`Map changed with ${maxWalls} random walls.`);
+
+    // Helper to add walls based on grid state
+    const addWallsFromGrid = () => {
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                // Top wall
+                if (grid[r][c].walls.top) {
+                    for (let i = 0; i < cellSize / objectSize; i++) { // Place objectSize sized wall segments
+                        addDynamicObjectToMap('wall', c * cellSize + i * objectSize, r * cellSize);
+                    }
+                }
+                // Left wall (only need to draw top and left for each cell)
+                if (grid[r][c].walls.left) {
+                    for (let i = 0; i < cellSize / objectSize; i++) {
+                        addDynamicObjectToMap('wall', c * cellSize, r * cellSize + i * objectSize);
+                    }
+                }
+                // Rightmost and bottommost walls of the maze perimeter
+                if (c === cols - 1 && grid[r][c].walls.right) {
+                    for (let i = 0; i < cellSize / objectSize; i++) {
+                        addDynamicObjectToMap('wall', (c + 1) * cellSize - objectSize, r * cellSize + i * objectSize);
+                    }
+                }
+                if (r === rows - 1 && grid[r][c].walls.bottom) {
+                     for (let i = 0; i < cellSize / objectSize; i++) {
+                        addDynamicObjectToMap('wall', c * cellSize + i * objectSize, (r + 1) * cellSize - objectSize);
+                    }
+                }
+            }
+        }
+    };
+
+
+    // Recursive Backtracking
+    const stack = [];
+    let currentCell = { r: 0, c: 0 };
+    grid[currentCell.r][currentCell.c].visited = true;
+    stack.push(currentCell);
+
+    while (stack.length > 0) {
+        let r = currentCell.r;
+        let c = currentCell.c;
+
+        const neighbors = [];
+        // Top neighbor
+        if (r > 0 && !grid[r - 1][c].visited) neighbors.push({ r: r - 1, c: c, wall: 'top' });
+        // Right neighbor
+        if (c < cols - 1 && !grid[r][c + 1].visited) neighbors.push({ r: r, c: c + 1, wall: 'right' });
+        // Bottom neighbor
+        if (r < rows - 1 && !grid[r + 1][c].visited) neighbors.push({ r: r + 1, c: c, wall: 'bottom' });
+        // Left neighbor
+        if (c > 0 && !grid[r][c - 1].visited) neighbors.push({ r: r, c: c - 1, wall: 'left' });
+
+        if (neighbors.length > 0) {
+            const nextCell = neighbors[Math.floor(Math.random() * neighbors.length)];
+            
+            // Remove wall between current and next cell
+            if (nextCell.wall === 'top') {
+                grid[r][c].walls.top = false;
+                grid[r - 1][c].walls.bottom = false;
+            } else if (nextCell.wall === 'right') {
+                grid[r][c].walls.right = false;
+                grid[r][c + 1].walls.left = false;
+            } else if (nextCell.wall === 'bottom') {
+                grid[r][c].walls.bottom = false;
+                grid[r + 1][c].walls.top = false;
+            } else if (nextCell.wall === 'left') {
+                grid[r][c].walls.left = false;
+                grid[r][c - 1].walls.right = false;
+            }
+
+            stack.push(currentCell); // Push current cell back to stack
+            currentCell = { r: nextCell.r, c: nextCell.c };
+            grid[currentCell.r][currentCell.c].visited = true;
+        } else {
+            currentCell = stack.pop(); // Backtrack
+        }
+    }
+
+    addWallsFromGrid(); // Add walls based on the generated grid
+    logMessage(`Map changed with a ${rows}x${cols} maze.`);
 }
 
 function addRandomObstacles() {
@@ -675,6 +856,15 @@ addObstacleBtn.addEventListener('click', () => addDynamicObjectToMap('obstacle')
 addVehicleBtn.addEventListener('click', () => addDynamicObjectToMap('vehicle'));
 changeMapBtn.addEventListener('click', changeMap); // New event listener
 randomObstaclesBtn.addEventListener('click', addRandomObstacles); // New event listener
+
+// Add event listeners for ODD UI elements to update visualization
+weatherSelect.addEventListener('change', updateOddVisualization);
+windSpeedSelect.addEventListener('change', updateOddVisualization);
+rainfallRateSelect.addEventListener('change', updateOddVisualization);
+snowfallRateSelect.addEventListener('change', updateOddVisualization);
+luminosityInput.addEventListener('input', updateOddVisualization);
+particulateTypeInput.addEventListener('input', updateOddVisualization);
+particulateIntensityInput.addEventListener('input', updateOddVisualization);
 
 // Global goal for algorithm instantiation
 const MAP_SIZE = 500;
