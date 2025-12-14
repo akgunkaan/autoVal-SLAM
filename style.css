@@ -51,14 +51,16 @@ body {
 }
 
 .vehicle {
-    background-color: blue;
+    background-color: #007bff; /* A distinct blue for the vehicle */
 }
 
-.person {
-    background-color: green;
-    border-radius: 50%;
+.obstacle {
+    background-color: orange;
+    border-radius: 50%; /* Making obstacles circular */
 }
 
-.car {
-    background-color: red;
+.wall {
+    background-color: darkgray;
+    width: 10px; /* Walls are typically static and can be full grid cells */
+    height: 10px;
 }
