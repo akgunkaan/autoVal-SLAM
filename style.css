@@ -55,8 +55,16 @@ body {
 }
 
 .obstacle {
-    background-color: orange;
-    border-radius: 50%; /* Making obstacles circular */
+    background-color: green; /* Green spots mark obstacles */
+    border-radius: 50%;
+}
+
+.map-clear {
+    background-color: grey; /* Grey zones represent explored and clear */
+}
+
+.map-frontier {
+    background-color: darkgrey; /* Dark grey zones represent the "frontier" */
 }
 
 .wall {

@@ -10,7 +10,6 @@ const weatherSelect = document.getElementById("weather");
 const speedDisplay = document.getElementById("speed-display");
 const exportOddBtn = document.getElementById("export-odd-btn");
 const addObstacleBtn = document.getElementById("add-obstacle-btn"); // Renamed
-const addVehicleBtn = document.getElementById("add-vehicle-btn");   // Renamed
 const changeMapBtn = document.getElementById("change-map-btn");     // New
 const randomObstaclesBtn = document.getElementById("random-obstacles-btn"); // New
 const vehicle = document.getElementById("vehicle");
@@ -151,6 +150,155 @@ let pyodide = null; // Global Pyodide instance
 let pythonAlgorithmInstance = null; // Global Python algorithm instance
 let parsedOddData = null; // Global parsed ODD data
 
+// Global map state and constants for map visualization
+let mapGridState = []; // 2D array representing the state of each grid cell
+const CELL_STATE = {
+    UNEXPLORED: 'unexplored',
+    CLEAR: 'clear',
+    OBSTACLE_DETECTED: 'obstacle_detected',
+    WALL_DETECTED: 'wall_detected',
+    FRONTIER: 'frontier'
+};
+
+function initializeMapGridState() {
+    // Clear all existing map-clear and map-frontier divs
+    Array.from(map.querySelectorAll('.map-clear, .map-frontier')).forEach(el => el.remove());
+
+    const gridRows = MAP_SIZE / STEP;
+    const gridCols = MAP_SIZE / STEP;
+
+    mapGridState = Array(gridRows).fill(0).map(() => Array(gridCols).fill(CELL_STATE.UNEXPLORED));
+
+    // Mark existing obstacles and walls in mapGridState
+    const existingObjects = getMapObjects(false); // Get all objects including vehicle
+    existingObjects.forEach(obj => {
+        const startR = Math.floor(obj.y / STEP);
+        const startC = Math.floor(obj.x / STEP);
+        const endR = Math.ceil((obj.y + obj.height) / STEP);
+        const endC = Math.ceil((obj.x + obj.width) / STEP);
+
+        for (let r = startR; r < endR; r++) {
+            for (let c = startC; c < endC; c++) {
+                if (r >= 0 && r < gridRows && c >= 0 && c < gridCols) {
+                    if (obj.type === 'obstacle') {
+                        mapGridState[r][c] = CELL_STATE.OBSTACLE_DETECTED;
+                    } else if (obj.type === 'wall') {
+                        mapGridState[r][c] = CELL_STATE.WALL_DETECTED;
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Helper to convert pixel coordinates to grid cell coordinates
+function getCellCoords(x, y) {
+    return {
+        r: Math.floor(y / STEP),
+        c: Math.floor(x / STEP)
+    };
+}
+
+// Helper to convert grid cell coordinates to pixel coordinates
+function getPixelCoords(r, c) {
+    return {
+        x: c * STEP,
+        y: r * STEP
+    };
+}
+
+// Helper to mark a cell and render/update its div
+function markCell(r, c, type) {
+    const gridRows = MAP_SIZE / STEP;
+    const gridCols = MAP_SIZE / STEP;
+
+    if (r < 0 || r >= gridRows || c < 0 || c >= gridCols) return; // Out of bounds
+
+    // Only update if state changes
+    if (mapGridState[r][c] === type) return;
+
+    mapGridState[r][c] = type;
+
+    const cellId = `cell-${r}-${c}`;
+    let cellDiv = document.getElementById(cellId);
+
+    if (cellDiv) {
+        // Update existing div
+        cellDiv.className = `map-object ${type}`; // Update class to reflect new type
+    } else {
+        // Create new div
+        cellDiv = document.createElement('div');
+        cellDiv.id = cellId;
+        cellDiv.className = `map-object ${type}`;
+        const pixelCoords = getPixelCoords(r, c);
+        cellDiv.style.left = `${pixelCoords.x}px`;
+        cellDiv.style.top = `${pixelCoords.y}px`;
+        map.appendChild(cellDiv);
+    }
+
+    // Remove old classes if they exist and are different
+    if (type !== CELL_STATE.CLEAR) cellDiv.classList.remove(CELL_STATE.CLEAR);
+    if (type !== CELL_STATE.FRONTIER) cellDiv.classList.remove(CELL_STATE.FRONTIER);
+    if (type !== CELL_STATE.OBSTACLE_DETECTED) cellDiv.classList.remove(CELL_STATE.OBSTACLE_DETECTED);
+    if (type !== CELL_STATE.WALL_DETECTED) cellDiv.classList.remove(CELL_STATE.WALL_DETECTED);
+}
+
+// Function to mark a circular area around the vehicle as CLEAR
+function markAreaAsClear(centerX, centerY, radius) {
+    const gridRows = MAP_SIZE / STEP;
+    const gridCols = MAP_SIZE / STEP;
+
+    const radiusCells = Math.ceil(radius / STEP);
+
+    for (let r = 0; r < gridRows; r++) {
+        for (let c = 0; c < gridCols; c++) {
+            const pixelCoords = getPixelCoords(r, c);
+            const cellCenterX = pixelCoords.x + STEP / 2;
+            const cellCenterY = pixelCoords.y + STEP / 2;
+
+            const dist = calculateDistance({x: centerX, y: centerY}, {x: cellCenterX, y: cellCenterY});
+
+            if (dist <= radius) {
+                if (mapGridState[r][c] === CELL_STATE.UNEXPLORED || mapGridState[r][c] === CELL_STATE.FRONTIER) {
+                    markCell(r, c, CELL_STATE.CLEAR);
+                }
+            }
+        }
+    }
+}
+
+// Function to identify and mark frontier zones
+function updateFrontier() {
+    const gridRows = MAP_SIZE / STEP;
+    const gridCols = MAP_SIZE / STEP;
+
+    for (let r = 0; r < gridRows; r++) {
+        for (let c = 0; c < gridCols; c++) {
+            if (mapGridState[r][c] === CELL_STATE.CLEAR) {
+                // Check neighbors
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if (dr === 0 && dc === 0) continue; // Skip self
+
+                        const nr = r + dr;
+                        const nc = c + dc;
+
+                        if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols) {
+                            if (mapGridState[nr][nc] === CELL_STATE.UNEXPLORED) {
+                                // Only mark as frontier if not an obstacle or wall detected
+                                // This assumes obstacles/walls are already set in mapGridState
+                                if (mapGridState[nr][nc] !== CELL_STATE.OBSTACLE_DETECTED && mapGridState[nr][nc] !== CELL_STATE.WALL_DETECTED) {
+                                    markCell(nr, nc, CELL_STATE.FRONTIER);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 function logMessage(message) {
     console.log(message);
     outputLog.textContent += `\n${message}`;
@@ -176,6 +324,10 @@ async function main() {
     // Load algorithms
     const algorithmsCode = await (await fetch('src/autoval_slam/algorithms.py')).text();
     pyodide.FS.writeFile('/home/pyodide/algorithms.py', algorithmsCode);
+
+    // Load maze generator
+    const mazeGeneratorCode = await (await fetch('src/autoval_slam/maze_generator.py')).text();
+    pyodide.FS.writeFile('/home/pyodide/maze_generator.py', mazeGeneratorCode);
 
     // Parse ODD XML
     logMessage("Parsing ODD XML...");
@@ -245,6 +397,7 @@ async function runSimulation() {
 
     const simType = simTypeSelect.value;
     const frameCount = parseInt(frameCountInput.value);
+    const liveOdd = getLiveOddData(); // Get live ODD data for sensor simulation
 
     // Call the new movement function that considers the selected algorithm
     await simulateVehicleMovementWithAlgorithm(frameCount, selectedAlgorithm);
@@ -252,20 +405,25 @@ async function runSimulation() {
     if (simType === "lidar") {
         try {
             logMessage("Running LiDAR simulation in Python...");
-            pyodide.runPython(`
+            await pyodide.runPythonAsync(`
                 import sys
                 sys.path.append('/home/pyodide')
                 from sensors import simulate_lidar_scan
                 import matplotlib.pyplot as plt
                 import io
                 import base64
+                import json
 
-                # Generate data
-                scan_data = simulate_lidar_scan(num_points=180)
+                # Pass live ODD data to LiDAR simulation
+                odd_data_for_lidar = json.loads(json.dumps(${JSON.stringify(liveOdd)}))
+                scan_data = simulate_lidar_scan(num_points=180, odd_data=odd_data_for_lidar)
                 
                 # Create plot
                 fig, ax = plt.subplots(figsize=(6, 6))
-                ax.scatter(scan_data[:, 0], scan_data[:, 1], s=5)
+                # Convert scan_data from list of tuples to numpy array for plotting
+                import numpy as np
+                scan_data_np = np.array(scan_data)
+                ax.scatter(scan_data_np[:, 0], scan_data_np[:, 1], s=5)
                 ax.set_title("Synthetic LiDAR Scan")
                 ax.set_xlabel("X (m)")
                 ax.set_ylabel("Y (m)")
@@ -298,7 +456,26 @@ async function runSimulation() {
             logMessage(`Error during LiDAR simulation: ${error}`);
         }
     } else if (simType === "camera") {
-        logMessage("Camera simulation is not yet implemented for the web interface.");
+        try {
+            logMessage("Running Camera simulation in Python...");
+            await pyodide.runPythonAsync(`
+                import sys
+                sys.path.append('/home/pyodide')
+                from sensors import simulate_camera_feed
+                import json
+
+                # Pass live ODD data to camera simulation
+                odd_data_for_camera = json.loads(json.dumps(${JSON.stringify(liveOdd)}))
+                camera_status_message = simulate_camera_feed(odd_data=odd_data_for_camera)
+                js_camera_status_message = camera_status_message
+            `);
+            const cameraStatus = pyodide.globals.get('js_camera_status_message');
+            logMessage(`Camera Simulation Status: ${cameraStatus}`);
+            logMessage("Camera simulation complete.");
+
+        } catch (error) {
+            logMessage(`Error during Camera simulation: ${error}`);
+        }
     }
     
     logMessage("--- Simulation Finished ---");
@@ -438,6 +615,7 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
     const vehicleSize = vehicle.offsetWidth;
     const step = 10;
     const goal = { x: mapSize - vehicleSize, y: mapSize - vehicleSize }; // Bottom-right corner
+    const SENSOR_RANGE = 50; // Example sensor range in pixels for marking clear area
 
     // Re-instantiate the selected Python algorithm for each run
     // This logic is now handled in the algorithm button click listener
@@ -455,6 +633,8 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
         `);
         window.pythonAlgorithmInstance = pyodide.globals.get('current_algo_instance');
     }
+
+    initializeMapGridState(); // Initialize map grid state for new simulation
 
     let currentX = 0;
     let currentY = 0;
@@ -490,6 +670,10 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
         nextY = Math.max(0, Math.min(mapSize - vehicleSize, nextY));
 
         setVehiclePosition(nextX, nextY);
+
+        // Update map visualization for explored areas and frontier
+        markAreaAsClear(vehiclePos.x + vehicleSize / 2, vehiclePos.y + vehicleSize / 2, SENSOR_RANGE);
+        updateFrontier();
 
         // Collision detection for logging (after potential movement calculation)
         const collision = checkCollision(nextX, nextY);
@@ -720,13 +904,16 @@ function addDynamicObjectToMap(type, x = 10, y = 10) {
 }
 
 function clearMapObjects() {
-    const dynamicObjects = Array.from(map.children).filter(obj => obj !== vehicle);
+    const dynamicObjects = Array.from(map.children).filter(obj => obj !== vehicle && !obj.classList.contains('map-clear') && !obj.classList.contains('map-frontier'));
     dynamicObjects.forEach(obj => obj.remove());
+
+    // Also explicitly remove map-clear and map-frontier divs
+    Array.from(map.querySelectorAll('.map-clear, .map-frontier')).forEach(el => el.remove());
 }
 
-function changeMap() {
+async function changeMap() { // Made async to await Python call
     clearMapObjects();
-    logMessage("Generating maze...");
+    logMessage("Generating maze using Python...");
 
     const mapSize = MAP_SIZE; // 500px
     const objectSize = STEP; // 10px
@@ -734,103 +921,53 @@ function changeMap() {
     const cols = Math.floor(mapSize / cellSize); // Number of cells horizontally
     const rows = Math.floor(mapSize / cellSize); // Number of cells vertically
 
-    // Initialize grid: all cells unvisited, all walls present
-    const grid = [];
-    for (let r = 0; r < rows; r++) {
-        grid[r] = [];
-        for (let c = 0; c < cols; c++) {
-            grid[r][c] = {
-                visited: false,
-                walls: {
-                    top: true,
-                    right: true,
-                    bottom: true,
-                    left: true
-                }
-            };
-        }
+    // Call Python maze generator
+    let pythonMaze = null;
+    try {
+        await pyodide.runPythonAsync(`
+            import sys
+            sys.path.append('/home/pyodide')
+            from maze_generator import generate_maze
+            import json
+
+            maze_matrix = generate_maze(width=${cols}, height=${rows})
+            js_maze_matrix = json.dumps(maze_matrix)
+        `);
+        pythonMaze = JSON.parse(pyodide.globals.get('js_maze_matrix'));
+        logMessage(`Python maze generated: ${rows}x${cols} cells.`);
+    } catch (error) {
+        logMessage(`Error generating Python maze: ${error}`);
+        return;
     }
 
-    // Helper to add walls based on grid state
-    const addWallsFromGrid = () => {
-        for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-                // Top wall
-                if (grid[r][c].walls.top) {
-                    for (let i = 0; i < cellSize / objectSize; i++) { // Place objectSize sized wall segments
-                        addDynamicObjectToMap('wall', c * cellSize + i * objectSize, r * cellSize);
-                    }
-                }
-                // Left wall (only need to draw top and left for each cell)
-                if (grid[r][c].walls.left) {
-                    for (let i = 0; i < cellSize / objectSize; i++) {
-                        addDynamicObjectToMap('wall', c * cellSize, r * cellSize + i * objectSize);
-                    }
-                }
-                // Rightmost and bottommost walls of the maze perimeter
-                if (c === cols - 1 && grid[r][c].walls.right) {
-                    for (let i = 0; i < cellSize / objectSize; i++) {
-                        addDynamicObjectToMap('wall', (c + 1) * cellSize - objectSize, r * cellSize + i * objectSize);
-                    }
-                }
-                if (r === rows - 1 && grid[r][c].walls.bottom) {
-                     for (let i = 0; i < cellSize / objectSize; i++) {
-                        addDynamicObjectToMap('wall', c * cellSize + i * objectSize, (r + 1) * cellSize - objectSize);
-                    }
-                }
+    // Render the maze from Python output
+    for (let r = 0; r < pythonMaze.length; r++) {
+        for (let c = 0; c < pythonMaze[r].length; c++) {
+            const char = pythonMaze[r][c];
+            const x = c * objectSize;
+            const y = r * objectSize;
+
+            if (char === '#') {
+                addDynamicObjectToMap('wall', x, y);
+            } else if (char === 'S') {
+                // Optionally mark start
+                // addDynamicObjectToMap('start', x, y); // Requires 'start' CSS
+                // Ensure vehicle starts here
+                setVehiclePosition(x, y);
+                logMessage(`Maze start (S) at (${x}, ${y})`);
+            } else if (char === 'E') {
+                // Optionally mark end
+                // addDynamicObjectToMap('end', x, y); // Requires 'end' CSS
+                // Update GOAL to maze end
+                GOAL.x = x;
+                GOAL.y = y;
+                logMessage(`Maze end (E) at (${x}, ${y})`);
             }
-        }
-    };
-
-
-    // Recursive Backtracking
-    const stack = [];
-    let currentCell = { r: 0, c: 0 };
-    grid[currentCell.r][currentCell.c].visited = true;
-    stack.push(currentCell);
-
-    while (stack.length > 0) {
-        let r = currentCell.r;
-        let c = currentCell.c;
-
-        const neighbors = [];
-        // Top neighbor
-        if (r > 0 && !grid[r - 1][c].visited) neighbors.push({ r: r - 1, c: c, wall: 'top' });
-        // Right neighbor
-        if (c < cols - 1 && !grid[r][c + 1].visited) neighbors.push({ r: r, c: c + 1, wall: 'right' });
-        // Bottom neighbor
-        if (r < rows - 1 && !grid[r + 1][c].visited) neighbors.push({ r: r + 1, c: c, wall: 'bottom' });
-        // Left neighbor
-        if (c > 0 && !grid[r][c - 1].visited) neighbors.push({ r: r, c: c - 1, wall: 'left' });
-
-        if (neighbors.length > 0) {
-            const nextCell = neighbors[Math.floor(Math.random() * neighbors.length)];
-            
-            // Remove wall between current and next cell
-            if (nextCell.wall === 'top') {
-                grid[r][c].walls.top = false;
-                grid[r - 1][c].walls.bottom = false;
-            } else if (nextCell.wall === 'right') {
-                grid[r][c].walls.right = false;
-                grid[r][c + 1].walls.left = false;
-            } else if (nextCell.wall === 'bottom') {
-                grid[r][c].walls.bottom = false;
-                grid[r + 1][c].walls.top = false;
-            } else if (nextCell.wall === 'left') {
-                grid[r][c].walls.left = false;
-                grid[r][c - 1].walls.right = false;
-            }
-
-            stack.push(currentCell); // Push current cell back to stack
-            currentCell = { r: nextCell.r, c: nextCell.c };
-            grid[currentCell.r][currentCell.c].visited = true;
-        } else {
-            currentCell = stack.pop(); // Backtrack
         }
     }
-
-    addWallsFromGrid(); // Add walls based on the generated grid
-    logMessage(`Map changed with a ${rows}x${cols} maze.`);
+    logMessage("Maze rendered.");
+    initializeMapGridState(); // Initialize map grid state after maze is rendered
+}
 }
 
 function addRandomObstacles() {
@@ -853,7 +990,6 @@ makeDraggable(vehicle);
 weatherSelect.addEventListener('change', updateVehicleSpeed);
 exportOddBtn.addEventListener('click', exportODD);
 addObstacleBtn.addEventListener('click', () => addDynamicObjectToMap('obstacle'));
-addVehicleBtn.addEventListener('click', () => addDynamicObjectToMap('vehicle'));
 changeMapBtn.addEventListener('click', changeMap); // New event listener
 randomObstaclesBtn.addEventListener('click', addRandomObstacles); // New event listener
 
