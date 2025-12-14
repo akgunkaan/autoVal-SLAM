@@ -15,9 +15,133 @@ const changeMapBtn = document.getElementById("change-map-btn");     // New
 const randomObstaclesBtn = document.getElementById("random-obstacles-btn"); // New
 const vehicle = document.getElementById("vehicle");
 
+const oddXmlString = `
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<entity xmlns:vc="http://www.w3.org/2007/XMLSchema-versioning" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="ses.xsd" name="ODD">
+<aspect name="oddDec">
+<entity name="Environment">
+<aspect name="envDec">
+<entity name="Weather">
+<var name="Air_Temperature" default="none" lower="-20" upper="30" ></var>
+<aspect name="weatherDec">
+<entity name="Wind">
+<specialization name="windSpec">
+<entity name="No">
+<var name="speed" default="0.0" lower="0.0" upper="0.0" ></var>
+</entity>
+<entity name="Low">
+<var name="speed" default="none" lower="0.0" upper="5.3" ></var>
+</entity>
+<entity name="Medium">
+<var name="speed" default="none" lower="5.5" upper="17.1" ></var>
+</entity>
+<entity name="High">
+<var name="speed" default="none" lower="17.2" upper="40.0" ></var>
+</entity>
+</specialization>
+</entity>
+<entity name="Rainfall">
+<specialization name="rainfallSpec">
+<entity name="No" ref="No"/>
+<entity name="Light">
+<var name="precipitation_rate(mmh)" default="none" lower="0.0" upper="2.4" ></var>
+</entity>
+<entity name="Moderate">
+<var name="precipitation_rate" default="none" lower="2.5" upper="7.5" ></var>
+</entity>
+<entity name="Heavy">
+<var name="precipitation_rate(mmh)" default="none" lower="7.5" upper="50" ></var>
+</entity>
+<entity name="Violent">
+<var name="precipitation_rate(mmh)" default="none" lower="51" upper="100" ></var>
+</entity>
+<entity name="Cloudburst">
+<var name="precipitation_rate(mmh)" default="none" lower="100" upper="150" ></var>
+</entity>
+</specialization>
+</entity>
+<entity name="Snowfall">
+<specialization name="snowfallSpec">
+<entity name="Heavy" ref="Heavy"/>
+<entity name="Moderate" ref="Moderate"/>
+<entity name="Light" ref="Light"/>
+<entity name="No" ref="No"/>
+</specialization>
+</entity>
+</aspect>
+</entity>
+<entity name="Particulates">
+<var name="Type" default="none"></var>
+<var name="Intensity" default="none" lower="0" upper="100" ></var>
+<var name="Size" default="none" lower="0" upper="10" ></var>
+</entity>
+<entity name="Illumination">
+<var name="Luminosity" default="none" lower="0" upper="12000" ></var>
+<var name="sun_position(degrees)" default="none" lower="0" upper="180" ></var>
+<specialization name="cloudinessSpec">
+<entity name="Clear">
+</entity>
+<entity name="Partly_Cloudy">
+</entity>
+<entity name="Overcast">
+</entity>
+</specialization>
+</entity>
+<entity name="Connectivity">
+<var name="communication_technology" default="none"></var>
+<var name="positioning_system" default="none"></var>
+</entity>
+</aspect>
+</entity>
+<entity name="Static_Entities">
+<aspect name="staticEntDec">
+<entity name="Flight_Area">
+</entity>
+<entity name="Landing_Pad">
+<var name="Position" default="none"></var>
+<var name="area(m2)" default="none" lower="1" upper="20" ></var>
+</entity>
+<entity name="Geofencing">
+</entity>
+<entity name="Trees">
+</entity>
+<entity name="Buildings">
+</entity>
+<entity name="Airspace">
+</entity>
+</aspect>
+</entity>
+<entity name="Dynamic_Entities">
+<aspect name="dynamicDec">
+<entity name="Intruder_Drone">
+</entity>
+<entity name="Subject_Drone">
+<aspect name="subjectDec">
+<entity name="Drone_State">
+<var name="altitude(m)" default="25" lower="23" upper="48" ></var>
+<var name="speed(ms)" default="none" lower="0" upper="10" ></var>
+<var name="angle" default="none" lower="-10.0" upper="10.0" ></var>
+</entity>
+<entity name="Payloads">
+<multiAspect name="PayloadMAsp">
+<entity name="Payload">
+</entity>
+</multiAspect>
+</entity>
+</aspect>
+</entity>
+</aspect>
+</entity>
+</aspect>
+</entity>
+`;
+
 let selectedAlgorithm = null; // Global variable to store selected algorithm
 let currentActiveAlgoButton = null; // To keep track of the currently active button
 let detectedEvents = []; // Global variable to store detected events
+let pyodide = null; // Global Pyodide instance
+let pythonAlgorithmInstance = null; // Global Python algorithm instance
+let parsedOddData = null; // Global parsed ODD data
 
 function logMessage(message) {
     console.log(message);
@@ -26,7 +150,8 @@ function logMessage(message) {
 
 async function main() {
     logMessage("Initializing Pyodide...");
-    let pyodide = await loadPyodide();
+    window.pyodide = await loadPyodide(); // Store pyodide globally
+    pyodide = window.pyodide; // For local use
     logMessage("Pyodide loaded. Installing packages...");
     await pyodide.loadPackage(["numpy", "matplotlib"]);
     logMessage("Packages installed.");
@@ -36,6 +161,61 @@ async function main() {
     const sensorsCode = await (await fetch('src/autoval_slam/sensors.py')).text();
     pyodide.FS.writeFile('/home/pyodide/sensors.py', sensorsCode);
     
+    // Load ODD parser
+    const oddParserCode = await (await fetch('src/autoval_slam/odd_parser.py')).text();
+    pyodide.FS.writeFile('/home/pyodide/odd_parser.py', oddParserCode);
+
+    // Load algorithms
+    const algorithmsCode = await (await fetch('src/autoval_slam/algorithms.py')).text();
+    pyodide.FS.writeFile('/home/pyodide/algorithms.py', algorithmsCode);
+
+    // Parse ODD XML
+    logMessage("Parsing ODD XML...");
+    await pyodide.runPythonAsync(`
+        import sys
+        sys.path.append('/home/pyodide')
+        from odd_parser import parse_odd_xml
+        import json
+        
+        odd_xml_string = """${oddXmlString}"""
+        parsed_data = parse_odd_xml(odd_xml_string)
+        js_parsed_odd_data = json.dumps(parsed_data)
+    `);
+    parsedOddData = JSON.parse(pyodide.globals.get('js_parsed_odd_data'));
+    logMessage("ODD XML Parsed.");
+
+    // Load ODD visualizer
+    const oddVisualizerCode = await (await fetch('src/autoval_slam/odd_visualizer.py')).text();
+    pyodide.FS.writeFile('/home/pyodide/odd_visualizer.py', oddVisualizerCode);
+    logMessage("ODD Visualizer loaded.");
+
+    // Visualize ODD data
+    const oddDisplayElement = document.getElementById('odd-display');
+    if (oddDisplayElement) {
+        logMessage("Generating ODD visualization...");
+        await pyodide.runPythonAsync(`
+            from odd_visualizer import visualize_odd_data
+            odd_viz_string = visualize_odd_data(json.loads(js_parsed_odd_data))
+        `);
+        oddDisplayElement.textContent = pyodide.globals.get('odd_viz_string');
+        logMessage("ODD visualization displayed.");
+    }
+
+    // Initialize default algorithm instance in Python
+    await pyodide.runPythonAsync(`
+        import sys
+        sys.path.append('/home/pyodide')
+        from algorithms import DefaultAlgorithm
+        default_algo_instance = DefaultAlgorithm(
+            vehicle_size=20,
+            step_size=10,
+            map_size=500,
+            goal_pos={'x': 490, 'y': 490} # Match JS goal
+        )
+    `);
+    pythonAlgorithmInstance = pyodide.globals.get('default_algo_instance');
+    logMessage("Default Algorithm Initialized.");
+
     // For now, camera sim is not fully supported in browser, we'll focus on LiDAR
     // const simCode = await (await fetch('src/autoval_slam/sim.py')).text();
     // pyodide.FS.writeFile('/home/pyodide/sim.py', simCode);
@@ -197,215 +377,60 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
     const step = 10;
     const goal = { x: mapSize - vehicleSize, y: mapSize - vehicleSize }; // Bottom-right corner
 
+    // Re-instantiate the selected Python algorithm for each run
+    // This logic is now handled in the algorithm button click listener
+    if (!window.pythonAlgorithmInstance) {
+        logMessage("No Python algorithm selected or initialized. Defaulting to DefaultAlgorithm.");
+        // Ensure DefaultAlgorithm is instantiated if none is selected
+        await pyodide.runPythonAsync(`
+            from algorithms import DefaultAlgorithm
+            current_algo_instance = DefaultAlgorithm(
+                vehicle_size=${VEHICLE_SIZE},
+                step_size=${STEP},
+                map_size=${MAP_SIZE},
+                goal_pos={'x': ${GOAL.x}, 'y': ${GOAL.y}}
+            )
+        `);
+        window.pythonAlgorithmInstance = pyodide.globals.get('current_algo_instance');
+    }
+
     let currentX = 0;
     let currentY = 0;
-    let direction = 0; // For default square path
-    let isFollowingWall = false; // For Bug Algorithms
-    let wallFollowDirection = { x: 0, y: 0 }; // For Bug Algorithms
-    let lastCollisionObject = null; // For Bug Algorithms
-
+    
     for (let i = 0; i < frameCount; i++) {
         await new Promise(resolve => setTimeout(resolve, 200)); // Simulate time passing
 
-        let moveX = 0;
-        let moveY = 0;
-        let nextX = currentX;
-        let nextY = currentY;
-
         const objects = getMapObjects(); // Get current map objects for collision checking
         const vehiclePos = getVehiclePosition();
+
+        // Convert JS objects to Python-compatible format
+        const python_current_pos = pyodide.toPy({x: vehiclePos.x, y: vehiclePos.y});
+        const python_obstacles = pyodide.toPy(objects.filter(obj => obj.type === 'obstacle'));
+        const python_walls = pyodide.toPy(objects.filter(obj => obj.type === 'wall'));
+        const python_odd_data = pyodide.toPy(parsedOddData); // Use global parsedOddData
+
+        // Call the Python algorithm's compute_next_move
+        let dx_dy_py = await window.pythonAlgorithmInstance.compute_next_move(
+            python_current_pos,
+            python_obstacles,
+            python_walls,
+            python_odd_data
+        );
+        let dx = dx_dy_py.get('0'); // Access tuple elements
+        let dy = dx_dy_py.get('1');
+        dx_dy_py.destroy(); // Clean up Pyodide object
+
+        let nextX = vehiclePos.x + dx;
+        let nextY = vehiclePos.y + dy;
         
-        // Default movement or based on selected algorithm
-        switch (algorithm) {
-            case 'APF': // Artificial Potential Field
-            case 'VFF': // Virtual Force Field
-                let attractiveForce = getDirectionVector(vehiclePos.x, vehiclePos.y, goal.x, goal.y);
-                attractiveForce.x *= 0.8; // Reduce attractive force strength
-                attractiveForce.y *= 0.8;
+        // Ensure vehicle stays within bounds after Python's move calculation
+        nextX = Math.max(0, Math.min(mapSize - vehicleSize, nextX));
+        nextY = Math.max(0, Math.min(mapSize - vehicleSize, nextY));
 
-                let repulsiveForce = { x: 0, y: 0 };
-                objects.forEach(obj => {
-                    const objCenter = { x: obj.x + obj.width / 2, y: obj.y + obj.height / 2 };
-                    const vehicleCenter = { x: vehiclePos.x + vehiclePos.width / 2, y: vehiclePos.y + vehiclePos.height / 2 };
-                    const dist = calculateDistance(vehicleCenter, objCenter);
-                    const safeDistance = 50; // Distance to start repelling
-
-                    if (dist < safeDistance && dist > 0) {
-                        let forceDir = getDirectionVector(objCenter.x, objCenter.y, vehicleCenter.x, vehicleCenter.y);
-                        const repulsionStrength = 1 - (dist / safeDistance); // Stronger repulsion when closer
-                        repulsiveForce.x += forceDir.x * repulsionStrength * 2; // Stronger repulsion force
-                        repulsiveForce.y += forceDir.y * repulsionStrength * 2;
-                    }
-                });
-
-                let resultantForce = normalizeVector({
-                    x: attractiveForce.x + repulsiveForce.x,
-                    y: attractiveForce.y + repulsiveForce.y
-                });
-                moveX = resultantForce.x * step;
-                moveY = resultantForce.y * step;
-
-                nextX = vehiclePos.x + moveX;
-                nextY = vehiclePos.y + moveY;
-                break;
-
-            case 'BugAlgorithms': // Bug Algorithms
-            case 'TangentBug': // TangentBug
-                let directPathVector = getDirectionVector(vehiclePos.x, vehiclePos.y, goal.x, goal.y);
-                nextX = vehiclePos.x + directPathVector.x * step;
-                nextY = vehiclePos.y + directPathVector.y * step;
-
-                let collisionDetected = checkCollision(nextX, nextY);
-
-                if (collisionDetected && !isFollowingWall) {
-                    isFollowingWall = true;
-                    lastCollisionObject = collisionDetected;
-                    // Start wall following (e.g., turn right)
-                    wallFollowDirection = { x: directPathVector.y, y: -directPathVector.x }; // Perpendicular vector for turning right
-                    logMessage(`Collision detected. Starting wall following around ${collisionDetected.type}.`);
-                }
-
-                if (isFollowingWall) {
-                    // Try to move along the wall
-                    nextX = vehiclePos.x + wallFollowDirection.x * step;
-                    nextY = vehiclePos.y + wallFollowDirection.y * step;
-
-                    // If still colliding with the same object, keep following
-                    if (checkCollision(nextX, nextY) === lastCollisionObject) {
-                        // Keep current wallFollowDirection
-                    } else {
-                        // Try to turn back towards the goal
-                        let tempNextX = vehiclePos.x + directPathVector.x * step;
-                        let tempNextY = vehiclePos.y + directPathVector.y * step;
-                        if (!checkCollision(tempNextX, tempNextY)) {
-                            isFollowingWall = false;
-                            lastCollisionObject = null;
-                            logMessage("Obstacle cleared. Resuming towards goal.");
-                            nextX = tempNextX;
-                            nextY = tempNextY;
-                        } else {
-                            // Still blocked, continue wall following
-                            nextX = vehiclePos.x + wallFollowDirection.x * step;
-                            nextY = vehiclePos.y + wallFollowDirection.y * step;
-                        }
-                    }
-                }
-                break;
-
-            case 'DWA': // Dynamic Window Approach
-                // Simplified DWA: Prioritize goal, avoid immediate collision
-                let targetVector = getDirectionVector(vehiclePos.x, vehiclePos.y, goal.x, goal.y);
-                let bestMove = { x: targetVector.x * step, y: targetVector.y * step };
-                let bestScore = -Infinity;
-
-                // Sample a few directions around the target vector
-                const sampleDirections = [-0.5, 0, 0.5]; // Left, Straight, Right turns
-                sampleDirections.forEach(angleOffset => {
-                    const angle = Math.atan2(targetVector.y, targetVector.x) + angleOffset;
-                    const testMove = { x: Math.cos(angle) * step, y: Math.sin(angle) * step };
-                    const testX = vehiclePos.x + testMove.x;
-                    const testY = vehiclePos.y + testMove.y;
-
-                    if (!checkCollision(testX, testY)) {
-                        // Calculate a simple score: closer to goal, further from objects
-                        const distToGoal = calculateDistance({x:testX, y:testY}, goal);
-                        let score = -distToGoal; // Minimize distance to goal
-
-                        objects.forEach(obj => {
-                            const objCenter = { x: obj.x + obj.width / 2, y: obj.y + obj.height / 2 };
-                            const testCenter = { x: testX + vehiclePos.width / 2, y: testY + vehiclePos.height / 2 };
-                            const dist = calculateDistance(testCenter, objCenter);
-                            if (dist < 30) { // Penalize proximity to objects
-                                score -= (30 - dist);
-                            }
-                        });
-
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestMove = testMove;
-                        }
-                    }
-                });
-                nextX = vehiclePos.x + bestMove.x;
-                nextY = vehiclePos.y + bestMove.y;
-                break;
-            
-            case 'PRM': // Probabilistic Roadmap
-            case 'RRT': // Rapidly-Exploring Random Tree
-                // Conceptual: Try to find a path, if blocked, find a random escape
-                let directPathPRM = getDirectionVector(vehiclePos.x, vehiclePos.y, goal.x, goal.y);
-                let testPRMX = vehiclePos.x + directPathPRM.x * step;
-                let testPRMY = vehiclePos.y + directPathPRM.y * step;
-
-                if (!checkCollision(testPRMX, testPRMY)) {
-                    nextX = testPRMX;
-                    nextY = testPRMY;
-                } else {
-                    // Path blocked, try a random direction to escape
-                    let randomAngle = Math.random() * 2 * Math.PI;
-                    nextX = vehiclePos.x + Math.cos(randomAngle) * step;
-                    nextY = vehiclePos.y + Math.sin(randomAngle) * step;
-                    logMessage(`${algorithm}: Path blocked. Taking a random step to escape.`);
-                }
-                break;
-
-            case 'DRL': // Deep Reinforcement Learning
-            case 'PPO': // Proximal Policy Optimization
-                // Conceptual: More "intelligent" avoidance, try to find an open path
-                let forwardVectorDRL = getDirectionVector(vehiclePos.x, vehiclePos.y, goal.x, goal.y);
-                let testDRLX = vehiclePos.x + forwardVectorDRL.x * step;
-                let testDRLY = vehiclePos.y + forwardVectorDRL.y * step;
-
-                if (!checkCollision(testDRLX, testDRLY)) {
-                    nextX = testDRLX;
-                    nextY = testDRLY;
-                } else {
-                    // Path blocked, try to find the "widest" open space
-                    let bestEscapeAngle = 0;
-                    let widestGap = -Infinity;
-                    for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 8) { // Sample 16 directions
-                        let testEscapeX = vehiclePos.x + Math.cos(angle) * step * 3; // Look further
-                        let testEscapeY = vehiclePos.y + Math.sin(angle) * step * 3;
-                        if (!checkCollision(testEscapeX, testEscapeY)) {
-                            // Simple heuristic for gap: distance to nearest obstacle in that direction
-                            let distToNearestObstacle = mapSize * 2; // Effectively infinity
-                            objects.forEach(obj => {
-                                const objCenter = { x: obj.x + obj.width / 2, y: obj.y + obj.height / 2 };
-                                const vehicleCenter = { x: vehiclePos.x + vehiclePos.width / 2, y: vehiclePos.y + vehiclePos.height / 2 };
-                                const dist = calculateDistance(vehicleCenter, objCenter);
-                                const angleToObject = Math.atan2(objCenter.y - vehicleCenter.y, objCenter.x - vehicleCenter.x);
-                                // Check if object is in this general direction
-                                if (Math.abs(angle - angleToObject) < Math.PI / 4) {
-                                    distToNearestObstacle = Math.min(distToNearestObstacle, dist);
-                                }
-                            });
-                            if (distToNearestObstacle > widestGap) {
-                                widestGap = distToNearestObstacle;
-                                bestEscapeAngle = angle;
-                            }
-                        }
-                    }
-                    nextX = vehiclePos.x + Math.cos(bestEscapeAngle) * step;
-                    nextY = vehiclePos.y + Math.sin(bestEscapeAngle) * step;
-                    logMessage(`${algorithm}: Path blocked. Seeking widest gap.`);
-                }
-                break;
-
-            default: // Default simple movement (square path)
-                // This logic is now handled by _simulateVehicleMovementDefault, but included here for clarity if it were different
-                await _simulateVehicleMovementDefault(frameCount - i, detectedEvents); // Pass remaining frames
-                return; // Exit if default is handled by _simulateVehicleMovementDefault
-        }
-
-        currentX = nextX;
-        currentY = nextY;
-        vehiclePos.x = currentX; // Update vehiclePos for next iteration
-        vehiclePos.y = currentY;
-
-        setVehiclePosition(currentX, currentY);
+        setVehiclePosition(nextX, nextY);
 
         // Collision detection for logging (after potential movement calculation)
-        const collision = checkCollision(currentX, currentY);
+        const collision = checkCollision(nextX, nextY);
         if (collision) {
             let objectType = 'Object';
             if (collision.type === 'obstacle') objectType = 'Obstacle';
@@ -415,11 +440,11 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
             const event = {
                 frame: i,
                 type: `${objectType.toLowerCase()}_detected`,
-                position: { x: currentX, y: currentY },
+                position: { x: nextX, y: nextY },
                 detected_object_id: collision.id
             };
             detectedEvents.push(event);
-            logMessage(`Frame ${i}: ${objectType} detected at (${currentX}, ${currentY}) near ${collision.id}`);
+            logMessage(`Frame ${i}: ${objectType} detected at (${nextX}, ${nextY}) near ${collision.id}`);
         }
         
         // Stop if reached goal
@@ -651,11 +676,17 @@ addVehicleBtn.addEventListener('click', () => addDynamicObjectToMap('vehicle'));
 changeMapBtn.addEventListener('click', changeMap); // New event listener
 randomObstaclesBtn.addEventListener('click', addRandomObstacles); // New event listener
 
+// Global goal for algorithm instantiation
+const MAP_SIZE = 500;
+const VEHICLE_SIZE = 20;
+const STEP = 10;
+const GOAL = { x: MAP_SIZE - VEHICLE_SIZE, y: MAP_SIZE - VEHICLE_SIZE }; // Bottom-right corner
+
 // Event Listeners for Obstacle Avoidance Algorithm buttons
 document.addEventListener('DOMContentLoaded', () => {
     const algorithmButtons = document.querySelectorAll('button[data-algorithm]');
     algorithmButtons.forEach(button => {
-        button.addEventListener('click', () => {
+        button.addEventListener('click', async () => { // Make async to await pyodide calls
             if (currentActiveAlgoButton) {
                 currentActiveAlgoButton.classList.remove('active');
             }
@@ -663,9 +694,46 @@ document.addEventListener('DOMContentLoaded', () => {
             currentActiveAlgoButton = button;
 
             const category = button.dataset.category;
-            const algorithm = button.dataset.algorithm;
+            let algorithm = button.dataset.algorithm;
             selectedAlgorithm = algorithm; // Update global variable
+
             logMessage(`Obstacle Avoidance Algorithm Selected: Category - ${category}, Algorithm - ${algorithm}`);
+
+            // Instantiate the selected algorithm in Python
+            if (pyodide) {
+                let algoClassName = algorithm || 'DefaultAlgorithm';
+                if (algoClassName === 'BugAlgorithms' || algoClassName === 'TangentBug') {
+                    algoClassName = 'BugAlgorithm'; // Map to Python class name
+                } else if (algoClassName === 'APF' || algoClassName === 'VFF') {
+                    algoClassName = 'APF'; // Map to Python class name
+                } else if (algoClassName === 'PRM' || algoClassName === 'RRT') {
+                    algoClassName = 'RRT'; // Map to Python class name
+                } else if (algoClassName === 'DRL' || algoClassName === 'PPO') {
+                    algoClassName = 'DRL'; // Map to Python class name
+                } else if (algoClassName === 'DWA') {
+                    algoClassName = 'DWA';
+                } else {
+                    algoClassName = 'DefaultAlgorithm'; // Fallback
+                }
+                
+                try {
+                    await pyodide.runPythonAsync(`
+                        from algorithms import ${algoClassName}
+                        current_algo_instance = ${algoClassName}(
+                            vehicle_size=${VEHICLE_SIZE},
+                            step_size=${STEP},
+                            map_size=${MAP_SIZE},
+                            goal_pos={'x': ${GOAL.x}, 'y': ${GOAL.y}}
+                        )
+                    `);
+                    window.pythonAlgorithmInstance = pyodide.globals.get('current_algo_instance');
+                    logMessage(`Python algorithm ${algoClassName} instantiated.`);
+                } catch (error) {
+                    logMessage(`Error instantiating Python algorithm ${algoClassName}: ${error}`);
+                }
+            } else {
+                logMessage("Pyodide not loaded, cannot instantiate Python algorithm.");
+            }
         });
     });
 });
