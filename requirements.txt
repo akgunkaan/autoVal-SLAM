@@ -1,0 +1,7 @@
+# Core dependencies for simulation and data processing
+numpy
+opencv-python
+matplotlib
+
+# Optional dependency for performance acceleration
+numba

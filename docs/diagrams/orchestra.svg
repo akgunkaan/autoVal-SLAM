@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100" font-family="sans-serif" font-size="14">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+        </marker>
+    </defs>
+
+    <!-- Boxes -->
+    <rect x="10" y="30" width="100" height="40" rx="5" fill="#cfe2f3" stroke="#333" stroke-width="1"/>
+    <text x="60" y="55" text-anchor="middle">Sensörler</text>
+
+    <rect x="150" y="30" width="100" height="40" rx="5" fill="#d9ead3" stroke="#333" stroke-width="1"/>
+    <text x="200" y="55" text-anchor="middle">Yapay Zeka (AI)</text>
+
+    <rect x="290" y="30" width="100" height="40" rx="5" fill="#fce5cd" stroke="#333" stroke-width="1"/>
+    <text x="340" y="55" text-anchor="middle">HPC</text>
+
+    <!-- Arrows -->
+    <line x1="110" y1="50" x2="140" y2="50" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="250" y1="50" x2="280" y2="50" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+</svg>
