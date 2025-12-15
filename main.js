@@ -2,17 +2,15 @@ const simTypeSelect = document.getElementById("sim-type");
 const frameCountInput = document.getElementById("frame-count");
 const runButton = document.getElementById("run-button");
 const outputLog = document.getElementById("output-log");
-const plotDiv = document.getElementById("plot");
 
 // New DOM elements for map and ODD controls
-const map = document.getElementById("map");
+const mapContainer = document.getElementById("map-container"); // New container for 3D canvas
 const weatherSelect = document.getElementById("weather");
 const speedDisplay = document.getElementById("speed-display");
 const exportOddBtn = document.getElementById("export-odd-btn");
 const addObstacleBtn = document.getElementById("add-obstacle-btn"); // Renamed
 const changeMapBtn = document.getElementById("change-map-btn");     // New
 const randomObstaclesBtn = document.getElementById("random-obstacles-btn"); // New
-const vehicle = document.getElementById("vehicle");
 
 // New ODD UI element references
 const windSpeedSelect = document.getElementById("wind-speed");
@@ -150,6 +148,11 @@ let pyodide = null; // Global Pyodide instance
 let pythonAlgorithmInstance = null; // Global Python algorithm instance
 let parsedOddData = null; // Global parsed ODD data
 
+// Global Three.js variables
+let scene, camera, renderer, controls;
+let vehicleMesh; // To hold our 3D vehicle
+const objectsInScene = []; // To keep track of all 3D objects
+
 // Global map state and constants for map visualization
 let mapGridState = []; // 2D array representing the state of each grid cell
 const CELL_STATE = {
@@ -161,8 +164,8 @@ const CELL_STATE = {
 };
 
 function initializeMapGridState() {
-    // Clear all existing map-clear and map-frontier divs
-    Array.from(map.querySelectorAll('.map-clear, .map-frontier')).forEach(el => el.remove());
+    // In 3D, we'll remove old meshes instead of querying for divs.
+    // This function will primarily initialize the logical mapGridState array.
 
     const gridRows = MAP_SIZE / STEP;
     const gridCols = MAP_SIZE / STEP;
@@ -170,12 +173,17 @@ function initializeMapGridState() {
     mapGridState = Array(gridRows).fill(0).map(() => Array(gridCols).fill(CELL_STATE.UNEXPLORED));
 
     // Mark existing obstacles and walls in mapGridState
-    const existingObjects = getMapObjects(false); // Get all objects including vehicle
+    const existingObjects = getMapObjects(); // Get all objects (now 3D-based)
     existingObjects.forEach(obj => {
-        const startR = Math.floor(obj.y / STEP);
-        const startC = Math.floor(obj.x / STEP);
-        const endR = Math.ceil((obj.y + obj.height) / STEP);
-        const endC = Math.ceil((obj.x + obj.width) / STEP);
+        // Convert object's 3D position (centered) back to grid coordinates (0-MAP_SIZE)
+        const x_coord = obj.x; // obj.x is already converted to 0-MAP_SIZE
+        const y_coord = obj.y; // obj.y is already converted to 0-MAP_SIZE
+
+        const startR = Math.floor(y_coord / STEP);
+        const startC = Math.floor(x_coord / STEP);
+        // Assuming objects are 1x1 grid cell for now, adjust if objects can span multiple cells
+        const endR = startR + 1; 
+        const endC = startC + 1;
 
         for (let r = startR; r < endR; r++) {
             for (let c = startC; c < endC; c++) {
@@ -191,23 +199,9 @@ function initializeMapGridState() {
     });
 }
 
-// Helper to convert pixel coordinates to grid cell coordinates
-function getCellCoords(x, y) {
-    return {
-        r: Math.floor(y / STEP),
-        c: Math.floor(x / STEP)
-    };
-}
 
-// Helper to convert grid cell coordinates to pixel coordinates
-function getPixelCoords(r, c) {
-    return {
-        x: c * STEP,
-        y: r * STEP
-    };
-}
 
-// Helper to mark a cell and render/update its div
+// Helper to mark a cell and render/update its 3D representation
 function markCell(r, c, type) {
     const gridRows = MAP_SIZE / STEP;
     const gridCols = MAP_SIZE / STEP;
@@ -219,44 +213,63 @@ function markCell(r, c, type) {
 
     mapGridState[r][c] = type;
 
-    const cellId = `cell-${r}-${c}`;
-    let cellDiv = document.getElementById(cellId);
-
-    if (cellDiv) {
-        // Update existing div
-        cellDiv.className = `map-object ${type}`; // Update class to reflect new type
-    } else {
-        // Create new div
-        cellDiv = document.createElement('div');
-        cellDiv.id = cellId;
-        cellDiv.className = `map-object ${type}`;
-        const pixelCoords = getPixelCoords(r, c);
-        cellDiv.style.left = `${pixelCoords.x}px`;
-        cellDiv.style.top = `${pixelCoords.y}px`;
-        map.appendChild(cellDiv);
+    // Remove existing mesh for this cell if it exists
+    const existingMesh = scene.getObjectByName(`cell-${r}-${c}`);
+    if (existingMesh) {
+        scene.remove(existingMesh);
+        existingMesh.geometry.dispose();
+        existingMesh.material.dispose();
     }
 
-    // Remove old classes if they exist and are different
-    if (type !== CELL_STATE.CLEAR) cellDiv.classList.remove(CELL_STATE.CLEAR);
-    if (type !== CELL_STATE.FRONTIER) cellDiv.classList.remove(CELL_STATE.FRONTIER);
-    if (type !== CELL_STATE.OBSTACLE_DETECTED) cellDiv.classList.remove(CELL_STATE.OBSTACLE_DETECTED);
-    if (type !== CELL_STATE.WALL_DETECTED) cellDiv.classList.remove(CELL_STATE.WALL_DETECTED);
+    let material;
+    let geometry = new THREE.BoxGeometry(STEP, 1, STEP); // Flat box for the cell
+
+    // Convert grid coordinates to Three.js world coordinates
+    // Center the grid around (0,0) in Three.js scene
+    const x = c * STEP + STEP / 2 - MAP_SIZE / 2;
+    const z = r * STEP + STEP / 2 - MAP_SIZE / 2; // Z in Three.js is Y in 2D grid
+
+    switch (type) {
+        case CELL_STATE.CLEAR:
+            material = new THREE.MeshPhongMaterial({ color: 0x888888 }); // Grey for clear
+            break;
+        case CELL_STATE.OBSTACLE_DETECTED:
+            material = new THREE.MeshPhongMaterial({ color: 0x00ff00 }); // Green for obstacle
+            geometry = new THREE.BoxGeometry(STEP, STEP, STEP); // Make obstacles taller
+            break;
+        case CELL_STATE.WALL_DETECTED:
+            material = new THREE.MeshPhongMaterial({ color: 0x0000ff }); // Blue for wall
+            geometry = new THREE.BoxGeometry(STEP, STEP, STEP); // Make walls taller
+            break;
+        case CELL_STATE.FRONTIER:
+            material = new THREE.MeshPhongMaterial({ color: 0x333333 }); // Dark grey for frontier
+            break;
+        default: // UNEXPLORED
+            return; // Don't render unexplored cells explicitly yet, or choose a default
+    }
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, type === CELL_STATE.CLEAR || type === CELL_STATE.FRONTIER ? 0.5 : STEP / 2, z); // Position slightly above ground for clear/frontier, half height for obstacles/walls
+    mesh.name = `cell-${r}-${c}`; // Give it a name for easy retrieval
+    scene.add(mesh);
+    objectsInScene.push(mesh); // Add to our tracking array
 }
 
 // Function to mark a circular area around the vehicle as CLEAR
-function markAreaAsClear(centerX, centerY, radius) {
+function markAreaAsClear(centerX, centerZ, radius) { // Changed centerY to centerZ
     const gridRows = MAP_SIZE / STEP;
     const gridCols = MAP_SIZE / STEP;
 
-    const radiusCells = Math.ceil(radius / STEP);
+    // We no longer need radiusCells since we're directly calculating distances with pixel coords
+    // const radiusCells = Math.ceil(radius / STEP);
 
     for (let r = 0; r < gridRows; r++) {
         for (let c = 0; c < gridCols; c++) {
-            const pixelCoords = getPixelCoords(r, c);
-            const cellCenterX = pixelCoords.x + STEP / 2;
-            const cellCenterY = pixelCoords.y + STEP / 2;
+            // Convert grid cell (r, c) to pixel coordinates (x, y) for distance calculation
+            const pixelX = c * STEP + STEP / 2;
+            const pixelY = r * STEP + STEP / 2; // pixelY is what was previously centerY
 
-            const dist = calculateDistance({x: centerX, y: centerY}, {x: cellCenterX, y: cellCenterY});
+            const dist = calculateDistance({x: centerX, y: centerZ}, {x: pixelX, y: pixelY}); // Use centerZ
 
             if (dist <= radius) {
                 if (mapGridState[r][c] === CELL_STATE.UNEXPLORED || mapGridState[r][c] === CELL_STATE.FRONTIER) {
@@ -304,86 +317,193 @@ function logMessage(message) {
     outputLog.textContent += `\n${message}`;
 }
 
+function init3DScene() {
+    const mapContainer = document.getElementById("map-container");
+    const width = mapContainer.clientWidth;
+    const height = 500; // Fixed height for now, can be dynamic later
+
+    // Scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xcccccc); // Light grey background
+
+    // Camera
+    camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+    camera.position.set(0, 100, 100); // Initial camera position
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    mapContainer.appendChild(renderer.domElement);
+
+    // Controls
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // An animation loop is required when damping is enabled
+    controls.dampingFactor = 0.25;
+    controls.screenSpacePanning = false;
+    controls.maxPolarAngle = Math.PI / 2; // Limit vertical rotation
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    directionalLight.position.set(1, 1, 1).normalize();
+    scene.add(directionalLight);
+
+    // Ground Plane (representing the map)
+    const groundGeometry = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE);
+    const groundMaterial = new THREE.MeshPhongMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2; // Rotate to lay flat
+    scene.add(ground);
+
+    // Vehicle (simple cube for now)
+    const vehicleGeometry = new THREE.BoxGeometry(VEHICLE_SIZE, VEHICLE_SIZE, VEHICLE_SIZE);
+    const vehicleMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+    vehicleMesh = new THREE.Mesh(vehicleGeometry, vehicleMaterial);
+    vehicleMesh.position.set(0, VEHICLE_SIZE / 2, 0); // Start at (0, 0, 0) on the ground
+    scene.add(vehicleMesh);
+    objectsInScene.push(vehicleMesh); // Add vehicle to tracked objects
+
+    // Animation Loop
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update(); // Only required if controls.enableDamping is set to true
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        const newWidth = mapContainer.clientWidth;
+        camera.aspect = newWidth / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(newWidth, height);
+    });
+}
+
 async function main() {
     logMessage("Initializing Pyodide...");
-    window.pyodide = await loadPyodide(); // Store pyodide globally
-    pyodide = window.pyodide; // For local use
-    logMessage("Pyodide loaded. Installing packages...");
-    await pyodide.loadPackage(["numpy", "matplotlib"]);
-    logMessage("Packages installed.");
+    try {
+        window.pyodide = await loadPyodide(); // Store pyodide globally
+        pyodide = window.pyodide; // For local use
+        logMessage("Pyodide loaded. Installing packages...");
+    } catch (error) {
+        logMessage(`Error loading Pyodide: ${error}`);
+        console.error("Pyodide loading error:", error);
+        runButton.disabled = true;
+        runButton.textContent = "Initialization Failed";
+        return;
+    }
+
+    try {
+        await pyodide.loadPackage(["numpy", "matplotlib"]);
+        logMessage("Packages installed.");
+    } catch (error) {
+        logMessage(`Error installing packages: ${error}`);
+        console.error("Package installation error:", error);
+        runButton.disabled = true;
+        runButton.textContent = "Initialization Failed";
+        return;
+    }
 
     // Fetch and load Python source files
     logMessage("Loading Python source files...");
-    const sensorsCode = await (await fetch('src/adcore/sensors.py')).text();
-    pyodide.FS.writeFile('/home/pyodide/sensors.py', sensorsCode);
+    const pythonFiles = [
+        { path: 'src/adcore/sensors.py', name: 'sensors.py' },
+        { path: 'src/autoval_slam/odd_parser.py', name: 'odd_parser.py' },
+        { path: 'src/autoval_slam/algorithms.py', name: 'algorithms.py' },
+        { path: 'src/autoval_slam/maze_generator.py', name: 'maze_generator.py' },
+        { path: 'src/autoval_slam/odd_visualizer.py', name: 'odd_visualizer.py' }
+    ];
+
+    for (const file of pythonFiles) {
+        try {
+            const code = await (await fetch(file.path)).text();
+            pyodide.FS.writeFile(`/home/pyodide/${file.name}`, code);
+            logMessage(`Loaded ${file.name}`);
+        } catch (error) {
+            logMessage(`Error loading ${file.name}: ${error}`);
+            console.error(`Error loading ${file.name}:`, error);
+            runButton.disabled = true;
+            runButton.textContent = "Initialization Failed";
+            return;
+        }
+    }
     
-    // Load ODD parser
-    const oddParserCode = await (await fetch('src/autoval_slam/odd_parser.py')).text();
-    pyodide.FS.writeFile('/home/pyodide/odd_parser.py', oddParserCode);
-
-    // Load algorithms
-    const algorithmsCode = await (await fetch('src/autoval_slam/algorithms.py')).text();
-    pyodide.FS.writeFile('/home/pyodide/algorithms.py', algorithmsCode);
-
-    // Load maze generator
-    const mazeGeneratorCode = await (await fetch('src/autoval_slam/maze_generator.py')).text();
-    pyodide.FS.writeFile('/home/pyodide/maze_generator.py', mazeGeneratorCode);
-
     // Parse ODD XML
     logMessage("Parsing ODD XML...");
-    await pyodide.runPythonAsync(`
-        import sys
-        sys.path.append('/home/pyodide')
-        from odd_parser import parse_odd_xml
-        import json
-        
-        odd_xml_string = """${oddXmlString}"""
-        parsed_data = parse_odd_xml(odd_xml_string)
-        js_parsed_odd_data = json.dumps(parsed_data)
-    `);
-    parsedOddData = JSON.parse(pyodide.globals.get('js_parsed_odd_data'));
-    logMessage("ODD XML Parsed.");
-
-    // Load ODD visualizer
-    const oddVisualizerCode = await (await fetch('src/autoval_slam/odd_visualizer.py')).text();
-    pyodide.FS.writeFile('/home/pyodide/odd_visualizer.py', oddVisualizerCode);
-    logMessage("ODD Visualizer loaded.");
+    try {
+        await pyodide.runPythonAsync(`
+            import sys
+            sys.path.append('/home/pyodide')
+            from odd_parser import parse_odd_xml
+            import json
+            
+            odd_xml_string = """${oddXmlString}"""
+            parsed_data = parse_odd_xml(odd_xml_string)
+            js_parsed_odd_data = json.dumps(parsed_data)
+        `);
+        parsedOddData = JSON.parse(pyodide.globals.get('js_parsed_odd_data'));
+        logMessage("ODD XML Parsed.");
+    } catch (error) {
+        logMessage(`Error parsing ODD XML: ${error}`);
+        console.error("ODD XML parsing error:", error);
+        runButton.disabled = true;
+        runButton.textContent = "Initialization Failed";
+        return;
+    }
 
     // Visualize ODD data
     const oddDisplayElement = document.getElementById('odd-display');
     if (oddDisplayElement) {
         logMessage("Generating ODD visualization...");
-        await pyodide.runPythonAsync(`
-            from odd_visualizer import visualize_odd_data
-            odd_viz_string = visualize_odd_data(json.loads(js_parsed_odd_data))
-        `);
-        oddDisplayElement.textContent = pyodide.globals.get('odd_viz_string');
-        logMessage("ODD visualization displayed.");
-        await updateOddVisualization(); // Initial call to update based on current UI state
+        try {
+            await pyodide.runPythonAsync(`
+                from odd_visualizer import visualize_odd_data
+                import json
+                odd_viz_string = visualize_odd_data(json.loads(js_parsed_odd_data))
+            `);
+            oddDisplayElement.textContent = pyodide.globals.get('odd_viz_string');
+            logMessage("ODD visualization displayed.");
+            await updateOddVisualization(); // Initial call to update based on current UI state
+        } catch (error) {
+            logMessage(`Error visualizing ODD data: ${error}`);
+            console.error("ODD visualization error:", error);
+            runButton.disabled = true;
+            runButton.textContent = "Initialization Failed";
+            return;
+        }
     }
 
     // Initialize default algorithm instance in Python
-    await pyodide.runPythonAsync(`
-        import sys
-        sys.path.append('/home/pyodide')
-        from algorithms import DefaultAlgorithm
-        default_algo_instance = DefaultAlgorithm(
-            vehicle_size=20,
-            step_size=10,
-            map_size=500,
-            goal_pos={'x': 490, 'y': 490} # Match JS goal
-        )
-    `);
-    pythonAlgorithmInstance = pyodide.globals.get('default_algo_instance');
-    logMessage("Default Algorithm Initialized.");
-
-    // For now, camera sim is not fully supported in browser, we'll focus on LiDAR
-    // const simCode = await (await fetch('src/autoval_slam/sim.py')).text();
-    // pyodide.FS.writeFile('/home/pyodide/sim.py', simCode);
+    try {
+        await pyodide.runPythonAsync(`
+            import sys
+            sys.path.append('/home/pyodide')
+            from algorithms import DefaultAlgorithm
+            default_algo_instance = DefaultAlgorithm(
+                vehicle_size=${VEHICLE_SIZE},
+                step_size=${STEP},
+                map_size=${MAP_SIZE},
+                goal_pos={'x': ${GOAL.x}, 'y': ${GOAL.y}} # Match JS goal
+            )
+        `);
+        pythonAlgorithmInstance = pyodide.globals.get('default_algo_instance');
+        logMessage("Default Algorithm Initialized.");
+    } catch (error) {
+        logMessage(`Error initializing Default Algorithm: ${error}`);
+        console.error("Default algorithm initialization error:", error);
+        runButton.disabled = true;
+        runButton.textContent = "Initialization Failed";
+        return;
+    }
     
     logMessage("Initialization complete. Ready to run simulation.");
     runButton.disabled = false;
     runButton.textContent = "Run Simulation";
+
+    init3DScene(); // Initialize the 3D scene
+}
 
 
 runButton.addEventListener("click", runSimulation);
@@ -392,7 +512,6 @@ async function runSimulation() {
     detectedEvents = []; // Reset global detectedEvents on each run
     logMessage("\n--- Starting Simulation ---");
     runButton.disabled = true;
-    plotDiv.innerHTML = ""; // Clear previous plot
     outputLog.textContent = "Initializing Pyodide...\nPyodide loaded. Installing packages...\nPackages installed.\nLoading Python source files...\nInitialization complete. Ready to run simulation."; // Clear all previous logs except init
 
     const simType = simTypeSelect.value;
@@ -444,18 +563,9 @@ async function runSimulation() {
 
             // Retrieve the plot from Python and display it
             let jsImgBase64 = pyodide.globals.get('js_img_base64');
-            logMessage("Simulation complete. Rendering plot...");
-
-            const img = document.createElement('img');
-            img.src = `data:image/png;base64,${jsImgBase64}`;
-            img.classList.add("img-fluid");
-            plotDiv.appendChild(img);
-            logMessage("Plot rendered.");
-
-        } catch (error) {
-            logMessage(`Error during LiDAR simulation: ${error}`);
-        }
-    } else if (simType === "camera") {
+            logMessage("LiDAR Simulation complete. Image data generated (base64).");
+            // If you want to display this in the UI, you would need an <img> tag somewhere
+            // or integrate it into the 3D scene (e.g., as a texture), which is more complex.
         try {
             logMessage("Running Camera simulation in Python...");
             await pyodide.runPythonAsync(`
@@ -483,42 +593,34 @@ async function runSimulation() {
 }
 }
 
-function getMapObjects(excludeVehicle = true) {
-    const objects = Array.from(map.children).filter(obj => {
-        return obj.classList.contains('map-object') && (excludeVehicle ? obj !== vehicle : true);
-    }).map(obj => {
-        return {
-            x: parseInt(obj.style.left),
-            y: parseInt(obj.style.top),
-            width: obj.offsetWidth, // Get actual rendered width
-            height: obj.offsetHeight, // Get actual rendered height
-            type: obj.classList.contains('obstacle') ? 'obstacle' :
-                  obj.classList.contains('vehicle') ? 'vehicle' :
-                  obj.classList.contains('wall') ? 'wall' : 'unknown'
-        };
+function getMapObjects() {
+    // For 3D scene, we need to iterate through objects in the Three.js scene
+    const objects = [];
+    scene.traverse(function(object) {
+        if (object.userData.isObstacle || object.userData.isWall) {
+            objects.push({
+                id: object.uuid, // Using Three.js UUID for identification
+                type: object.userData.isObstacle ? 'obstacle' : 'wall',
+                x: object.position.x + MAP_SIZE / 2, // Convert back to 0-MAP_SIZE range
+                y: object.position.z + MAP_SIZE / 2, // Use Z for Y-axis in 2D plane
+                width: object.geometry.parameters.width || STEP, // Assuming a box geometry
+                height: object.geometry.parameters.depth || STEP  // Assuming a box geometry
+            });
+        }
     });
     return objects;
 }
 
-function getVehiclePosition() {
-    return {
-        x: parseInt(vehicle.style.left),
-        y: parseInt(vehicle.style.top),
-        width: vehicle.offsetWidth,
-        height: vehicle.offsetHeight
-    };
-}
+function setVehiclePosition(x, z) {
+    // Offset vehicle position by half MAP_SIZE to center it around the origin
+    const centeredX = x - MAP_SIZE / 2;
+    const centeredZ = z - MAP_SIZE / 2;
 
-function setVehiclePosition(x, y) {
-    const mapSize = 500;
-    const vehicleSize = vehicle.offsetWidth; // Use actual vehicle size
-
-    let newX = Math.max(0, Math.min(mapSize - vehicleSize, x));
-    let newY = Math.max(0, Math.min(mapSize - vehicleSize, y));
-
-    vehicle.style.left = `${newX}px`;
-    vehicle.style.top = `${newY}px`;
-    return { x: newX, y: newY };
+    if (vehicleMesh) {
+        vehicleMesh.position.set(centeredX, VEHICLE_SIZE / 2, centeredZ);
+    }
+    // Return centered coordinates for consistent internal use
+    return { x: centeredX, z: centeredZ };
 }
 
 function calculateDistance(p1, p2) {
@@ -588,33 +690,45 @@ function getLiveOddData() {
     return liveOdd;
 }
 
-function checkCollision(x, y, objectType = null) {
-    const vehicleRect = { x: x, y: y, width: vehicle.offsetWidth, height: vehicle.offsetHeight };
-    const objects = getMapObjects();
+function checkCollision(x_0_MAP_SIZE, z_0_MAP_SIZE, objectType = null) {
+    // Convert current vehicle position from 0-MAP_SIZE to Three.js centered coordinates
+    const vehicleCenterX = x_0_MAP_SIZE - MAP_SIZE / 2;
+    const vehicleCenterZ = z_0_MAP_SIZE - MAP_SIZE / 2;
+
+    // Create a bounding box for the vehicle (re-calculate as position might change)
+    const vehicleBox = new THREE.Box3().setFromObject(vehicleMesh);
+
+    const objects = [];
+    scene.traverse(function(object) {
+        if (object.userData.isObstacle || object.userData.isWall) {
+            objects.push(object);
+        }
+    });
 
     for (const obj of objects) {
-        if (objectType && obj.type !== objectType) continue; // Check only for specific type if provided
+        if (objectType && obj.userData.type !== objectType) continue; // Check only for specific type if provided
 
-        const objRect = { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+        const objectBox = new THREE.Box3().setFromObject(obj);
 
-        if (vehicleRect.x < objRect.x + objRect.width &&
-            vehicleRect.x + vehicleRect.width > objRect.x &&
-            vehicleRect.y < objRect.y + objRect.height &&
-            vehicleRect.y + vehicleRect.height > objRect.y) {
-            return obj; // Return the colliding object
+        if (vehicleBox.intersectsBox(objectBox)) {
+            // Found a collision
+            return {
+                id: obj.uuid,
+                type: obj.userData.type // Use userData to store type
+            };
         }
     }
     return null; // No collision
 }
 
 async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
-    // Reset vehicle position to 0,0 at the start of each simulation
-    setVehiclePosition(0, 0); // Use the helper function to reset and constrain
+    // Reset vehicle position to (0, 0, 0) in Three.js scene (which is center of map for us)
+    setVehiclePosition(0, 0); 
 
-    const mapSize = 500;
-    const vehicleSize = vehicle.offsetWidth;
-    const step = 10;
-    const goal = { x: mapSize - vehicleSize, y: mapSize - vehicleSize }; // Bottom-right corner
+    const mapSize = MAP_SIZE;
+    const vehicleSize = VEHICLE_SIZE;
+    const step = STEP;
+    const goal = { x: MAP_SIZE - VEHICLE_SIZE, z: MAP_SIZE - VEHICLE_SIZE }; // Goal in 0-MAP_SIZE range
     const SENSOR_RANGE = 50; // Example sensor range in pixels for marking clear area
 
     // Re-instantiate the selected Python algorithm for each run
@@ -636,14 +750,15 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
 
     initializeMapGridState(); // Initialize map grid state for new simulation
 
-    let currentX = 0;
-    let currentY = 0;
-    
     for (let i = 0; i < frameCount; i++) {
         await new Promise(resolve => setTimeout(resolve, 200)); // Simulate time passing
 
         const objects = getMapObjects(); // Get current map objects for collision checking
-        const vehiclePos = getVehiclePosition();
+        
+        // Get vehicle's current position (converting from centered Three.js to 0-MAP_SIZE)
+        const vehicleCurrentX_3D = vehicleMesh.position.x + MAP_SIZE / 2;
+        const vehicleCurrentZ_3D = vehicleMesh.position.z + MAP_SIZE / 2;
+        const vehiclePos = {x: vehicleCurrentX_3D, y: vehicleCurrentZ_3D}; // Python expects x,y
 
         // Convert JS objects to Python-compatible format
         const python_current_pos = pyodide.toPy({x: vehiclePos.x, y: vehiclePos.y});
@@ -662,113 +777,41 @@ async function simulateVehicleMovementWithAlgorithm(frameCount, algorithm) {
         let dy = dx_dy_py.get('1');
         dx_dy_py.destroy(); // Clean up Pyodide object
 
-        let nextX = vehiclePos.x + dx;
-        let nextY = vehiclePos.y + dy;
+        let nextX_0_MAP_SIZE = vehiclePos.x + dx;
+        let nextZ_0_MAP_SIZE = vehiclePos.y + dy; // dy from Python maps to dz in our 3D scene
         
-        // Ensure vehicle stays within bounds after Python's move calculation
-        nextX = Math.max(0, Math.min(mapSize - vehicleSize, nextX));
-        nextY = Math.max(0, Math.min(mapSize - vehicleSize, nextY));
+        // Ensure vehicle stays within bounds after Python's move calculation (0-MAP_SIZE range)
+        nextX_0_MAP_SIZE = Math.max(0, Math.min(mapSize - vehicleSize, nextX_0_MAP_SIZE));
+        nextZ_0_MAP_SIZE = Math.max(0, Math.min(mapSize - vehicleSize, nextZ_0_MAP_SIZE));
 
-        setVehiclePosition(nextX, nextY);
+        setVehiclePosition(nextX_0_MAP_SIZE, nextZ_0_MAP_SIZE);
 
         // Update map visualization for explored areas and frontier
-        markAreaAsClear(vehiclePos.x + vehicleSize / 2, vehiclePos.y + vehicleSize / 2, SENSOR_RANGE);
+        markAreaAsClear(vehicleCurrentX_3D + vehicleSize / 2, vehicleCurrentZ_3D + vehicleSize / 2, SENSOR_RANGE);
         updateFrontier();
 
         // Collision detection for logging (after potential movement calculation)
-        const collision = checkCollision(nextX, nextY);
+        const collision = checkCollision(nextX_0_MAP_SIZE, nextZ_0_MAP_SIZE); // This function will be updated next
         if (collision) {
             let objectType = 'Object';
             if (collision.type === 'obstacle') objectType = 'Obstacle';
-            else if (collision.type === 'vehicle') objectType = 'Vehicle';
-            else if (collision.type === 'wall') objectType = 'Wall';
+            else if (collision.type === 'wall') objectType = 'Wall'; // Vehicle is handled separately
 
             const event = {
                 frame: i,
                 type: `${objectType.toLowerCase()}_detected`,
-                position: { x: nextX, y: nextY },
+                position: { x: nextX_0_MAP_SIZE, z: nextZ_0_MAP_SIZE },
                 detected_object_id: collision.id
             };
             detectedEvents.push(event);
-            logMessage(`Frame ${i}: ${objectType} detected at (${nextX}, ${nextY}) near ${collision.id}`);
+            logMessage(`Frame ${i}: ${objectType} detected at (${nextX_0_MAP_SIZE}, ${nextZ_0_MAP_SIZE}) near ${collision.id}`);
         }
         
         // Stop if reached goal
-        if (calculateDistance(vehiclePos, goal) < step) {
-            logMessage(`Goal reached at (${goal.x}, ${goal.y})! Simulation finished.`);
+        if (calculateDistance(vehiclePos, goal) < step) { // Use vehiclePos as it's in 0-MAP_SIZE
+            logMessage(`Goal reached at (${goal.x}, ${goal.z})! Simulation finished.`);
             break; // Exit loop if goal is reached
         }
-    }
-}
-
-async function _simulateVehicleMovementDefault(frameCount) {
-    const vehicleSize = 20; // Assuming vehicle is 20x20px, consistent with .map-object CSS
-    const mapSize = 500; // Map is 500x500px, consistent with .map-grid CSS (50x50 grid * 10px/grid)
-    const step = 10; // Movement step in pixels, matching grid
-    let currentX = 0;
-    let currentY = 0;
-    let direction = 0; // 0: right, 1: down, 2: left, 3: up
-
-    // The vehicle position is reset in simulateVehicleMovementWithAlgorithm
-    // vehicle.style.left = `0px`;
-    // vehicle.style.top = `0px`;
-
-    for (let i = 0; i < frameCount; i++) {
-        await new Promise(resolve => setTimeout(resolve, 200)); // Simulate time passing
-
-        // Simple movement pattern: right, down, left, up
-        switch (direction) {
-            case 0: // Right
-                currentX += step;
-                if (currentX >= mapSize - vehicleSize) direction = 1;
-                break;
-            case 1: // Down
-                currentY += step;
-                if (currentY >= mapSize - vehicleSize) direction = 2;
-                break;
-            case 2: // Left
-                currentX -= step;
-                if (currentX <= 0) direction = 3;
-                break;
-            case 3: // Up
-                currentY += step;
-                if (currentY <= 0) direction = 0;
-                break;
-        }
-
-        currentX = Math.max(0, Math.min(mapSize - vehicleSize, currentX));
-        currentY = Math.max(0, Math.min(mapSize - vehicleSize, currentY));
-
-        vehicle.style.left = `${currentX}px`;
-        vehicle.style.top = `${currentY}px`;
-
-        // Check for collisions with other objects
-        const mapObjects = Array.from(map.children).filter(obj => obj !== vehicle && obj.classList.contains('map-object'));
-        mapObjects.forEach(obj => {
-            const objX = parseInt(obj.style.left);
-            const objY = parseInt(obj.style.top);
-            const objSize = 20; // Assuming all map objects are 20x20px
-
-            // Simple AABB collision detection
-            if (currentX < objX + objSize &&
-                currentX + vehicleSize > objX &&
-                currentY < objY + objSize &&
-                currentY + vehicleSize > objY) {
-                let objectType = 'Object';
-                if (obj.classList.contains('obstacle')) objectType = 'Obstacle';
-                else if (obj.classList.contains('vehicle')) objectType = 'Vehicle';
-                else if (obj.classList.contains('wall')) objectType = 'Wall';
-
-                const event = {
-                    frame: i,
-                    type: `${objectType.toLowerCase()}_detected`,
-                    position: { x: currentX, y: currentY },
-                    detected_object_id: obj.id
-                };
-                detectedEvents.push(event);
-                logMessage(`Frame ${i}: ${objectType} detected at (${currentX}, ${currentY}) near ${obj.id}`);
-            }
-        });
     }
 }
 
@@ -792,23 +835,8 @@ function updateVehicleSpeed() {
 function exportODD() {
     const liveOdd = getLiveOddData(); // Get the current live ODD data from UI
     
-    // Get all map objects
-    const mapObjects = Array.from(map.children).filter(obj => obj.classList.contains('map-object')).map(obj => {
-        let type;
-        if (obj.classList.contains('vehicle')) type = 'vehicle';
-        else if (obj.classList.contains('obstacle')) type = 'obstacle';
-        else if (obj.classList.contains('wall')) type = 'wall';
-        else type = 'unknown'; // Fallback
-
-        return {
-            id: obj.id,
-            type: type,
-            position: {
-                x: parseInt(obj.style.left),
-                y: parseInt(obj.style.top)
-            }
-        };
-    });
+    // Get all map objects from the 3D scene
+    const mapObjects = getMapObjects();
 
     const odd_data = {
         version: "1.0",
@@ -848,18 +876,7 @@ function exportODD() {
     document.body.removeChild(a);
 }
 
-function makeDraggable(element) {
-    element.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/plain', e.target.id);
-        setTimeout(() => {
-            element.classList.add('dragging');
-        }, 0);
-    });
 
-    element.addEventListener('dragend', () => {
-        element.classList.remove('dragging');
-    });
-}
 
 // Function to update ODD Visualization
 async function updateOddVisualization() {
@@ -875,40 +892,50 @@ async function updateOddVisualization() {
     }
 }
 
-map.addEventListener('dragover', (e) => e.preventDefault());
+function addDynamicObjectToMap(type, x_0_MAP_SIZE = 0, z_0_MAP_SIZE = 0) {
+    const objectSize = STEP;
+    let geometry, material;
 
-map.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const id = e.dataTransfer.getData('text/plain');
-    const draggable = document.getElementById(id);
-    if (draggable && map.contains(draggable)) {
-        const mapRect = map.getBoundingClientRect();
-        // Snap to grid (10x10)
-        let x = Math.round((e.clientX - mapRect.left - 5) / 10) * 10;
-        let y = Math.round((e.clientY - mapRect.top - 5) / 10) * 10;
-        draggable.style.left = `${Math.max(0, Math.min(490, x))}px`;
-        draggable.style.top = `${Math.max(0, Math.min(490, y))}px`;
+    // Convert 0-MAP_SIZE coordinates to Three.js centered coordinates
+    const centerX = x_0_MAP_SIZE - MAP_SIZE / 2;
+    const centerZ = z_0_MAP_SIZE - MAP_SIZE / 2;
+
+    if (type === 'obstacle') {
+        geometry = new THREE.BoxGeometry(objectSize, objectSize, objectSize);
+        material = new THREE.MeshPhongMaterial({ color: 0x00ff00 }); // Green
+    } else if (type === 'wall') {
+        geometry = new THREE.BoxGeometry(objectSize, objectSize, objectSize);
+        material = new THREE.MeshPhongMaterial({ color: 0x0000ff }); // Blue
+    } else {
+        // Default or unknown type
+        geometry = new THREE.BoxGeometry(objectSize, objectSize, objectSize);
+        material = new THREE.MeshPhongMaterial({ color: 0xffff00 }); // Yellow
     }
-});
 
-function addDynamicObjectToMap(type, x = 10, y = 10) {
-    const newObject = document.createElement('div');
-    const newId = `${type}-${Date.now()}`;
-    newObject.id = newId;
-    newObject.className = `map-object ${type}`;
-    newObject.draggable = true;
-    newObject.style.left = `${x}px`;
-    newObject.style.top = `${y}px`;
-    map.appendChild(newObject);
-    makeDraggable(newObject);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(centerX, objectSize / 2, centerZ); // Position above ground
+    mesh.userData = { type: type, isObstacle: type === 'obstacle', isWall: type === 'wall' }; // Store custom data
+    mesh.name = `dynamic-object-${type}-${objectsInScene.length}`; // Unique name
+
+    scene.add(mesh);
+    objectsInScene.push(mesh); // Track the object
+    return mesh;
 }
 
 function clearMapObjects() {
-    const dynamicObjects = Array.from(map.children).filter(obj => obj !== vehicle && !obj.classList.contains('map-clear') && !obj.classList.contains('map-frontier'));
-    dynamicObjects.forEach(obj => obj.remove());
-
-    // Also explicitly remove map-clear and map-frontier divs
-    Array.from(map.querySelectorAll('.map-clear, .map-frontier')).forEach(el => el.remove());
+    // Remove all dynamic objects (obstacles, walls, and previously marked clear/frontier cells)
+    // from the Three.js scene, except for the vehicle mesh itself.
+    // Iterate backwards to safely remove elements during iteration
+    for (let i = scene.children.length - 1; i >= 0; i--) {
+        const object = scene.children[i];
+        if (object.userData.isObstacle || object.userData.isWall || object.name.startsWith('cell-')) {
+            scene.remove(object);
+            if (object.geometry) object.geometry.dispose();
+            if (object.material) object.material.dispose();
+        }
+    }
+    // After clearing, re-initialize mapGridState to reflect an empty map for future additions
+    initializeMapGridState(); // This will also ensure no lingering map states
 }
 
 async function changeMap() { // Made async to await Python call
@@ -960,7 +987,7 @@ async function changeMap() { // Made async to await Python call
                 // addDynamicObjectToMap('end', x, y); // Requires 'end' CSS
                 // Update GOAL to maze end
                 GOAL.x = x;
-                GOAL.y = y;
+                GOAL.z = y; // Update GOAL.z for 3D
                 logMessage(`Maze end (E) at (${x}, ${y})`);
             }
         }
@@ -986,7 +1013,6 @@ function addRandomObstacles() {
 }
 
 // Event Listeners for map controls
-makeDraggable(vehicle);
 weatherSelect.addEventListener('change', updateVehicleSpeed);
 exportOddBtn.addEventListener('click', exportODD);
 addObstacleBtn.addEventListener('click', () => addDynamicObjectToMap('obstacle'));

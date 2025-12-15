@@ -106,10 +106,6 @@
                             <button id="export-odd-btn" class="btn btn-info w-100">Export ODD (YAML)</button>
                         </div>
 
-                        <h5 class="card-title mt-3 mb-2 px-3">Simulation Map (50x50px grid)</h5>
-                        <div id="map" class="map-grid border border-secondary rounded overflow-hidden p-0">
-                            <div id="vehicle" class="map-object vehicle" draggable="true" style="left: 0px; top: 0px;"></div>
-                        </div>
                     </div>
                 </div>
 
@@ -181,8 +177,8 @@
                 </div>
                 
                 <h3>Visualization</h3>
-                <div id="plot-container" class="bg-light rounded text-center">
-                    <div id="plot"></div>
+                <div id="map-container" class="bg-light rounded text-center">
+                    <!-- Three.js canvas will be appended here -->
                 </div>
             </div>
         </div>
@@ -202,6 +198,7 @@
         <p>AutoVal SLAM Project</p>
     </footer>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
     <script src="main.js"></script>
 </body>
-</html>

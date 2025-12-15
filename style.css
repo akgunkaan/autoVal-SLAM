@@ -16,59 +16,6 @@ body {
     word-wrap: break-word;
 }
 
-#plot-container {
-    border: 1px solid #dee2e6;
-    padding: 10px;
-    min-height: 300px;
-}
-
 .card {
     box-shadow: 0 2px 4px rgba(0,0,0,.1);
-}
-
-.map-grid {
-    width: 500px; /* 50x10px */
-    height: 500px; /* 50x10px */
-    border: 2px solid #555;
-    position: relative;
-    background-color: #e0e0e0;
-    background-image:
-        linear-gradient(rgba(0,0,0,.1) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,0,0,.1) 1px, transparent 1px);
-    background-size: 10px 10px;
-}
-
-.map-object {
-    width: 10px;
-    height: 10px;
-    position: absolute;
-    cursor: grab;
-}
-
-.map-object.dragging {
-    cursor: grabbing;
-    opacity: 0.7;
-}
-
-.vehicle {
-    background-color: #007bff; /* A distinct blue for the vehicle */
-}
-
-.obstacle {
-    background-color: green; /* Green spots mark obstacles */
-    border-radius: 50%;
-}
-
-.map-clear {
-    background-color: grey; /* Grey zones represent explored and clear */
-}
-
-.map-frontier {
-    background-color: darkgrey; /* Dark grey zones represent the "frontier" */
-}
-
-.wall {
-    background-color: darkgray;
-    width: 10px; /* Walls are typically static and can be full grid cells */
-    height: 10px;
 }

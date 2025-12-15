@@ -7,15 +7,15 @@ This repository is a starting point for experimenting with concepts such as:
 -   **Web-Based GUI**: Controlling simulation parameters through a user-friendly HTML/CSS interface.
 -   **Zero-Installation Deployment**: Sharing the project via a link using automatic GitHub Pages deployment.
 
-## Conceptual Analogy: The Autonomous Driving Orchestra
+## Conceptual Analogy: The Robot Cartographer
 
-The system can be compared to a high-precision orchestra working in harmony:
+Imagine a diligent cartographer exploring uncharted territory. Our AutoVal SLAM system operates similarly:
 
 ![The Autonomous Driving Orchestra](docs/diagrams/orchestra.svg)
 
--   **Sensors (Musicians)**: The Python simulation code generates data (musical notes) from virtual sensors.
--   **Web Browser (Conductor & Stage)**: The browser orchestrates the simulation, runs the Python code via Pyodide, and visualizes the output on the screen.
--   **JavaScript (Sound Engineer)**: Acts as the glue, connecting the user interface controls to the Python simulation logic running in the background.
+-   **Sensors (Observational Tools)**: These are the robot's eyes and ears (LiDAR, Camera, etc.), gathering raw data about the environment – like a cartographer using a compass, sextant, and measuring tapes.
+-   **Pyodide (The Cartographer's Brain)**: This is the intelligent core that processes sensor data, runs complex SLAM algorithms (localization, mapping, obstacle avoidance), and builds an internal representation of the world. It's where the raw observations are turned into a coherent map.
+-   **JavaScript (The Atlas & Navigator's Interface)**: This is the interactive atlas and control panel. It visualizes the map being built, allows human interaction to set missions or adjust parameters, and displays the robot's progress and discoveries – like a living map that updates as the cartographer explores.
 
 ## Features and Enhancements
 
