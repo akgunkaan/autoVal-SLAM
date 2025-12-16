@@ -7,16 +7,6 @@ This repository is a starting point for experimenting with concepts such as:
 -   **Web-Based GUI**: Controlling simulation parameters through a user-friendly HTML/CSS interface.
 -   **Zero-Installation Deployment**: Sharing the project via a link using automatic GitHub Pages deployment.
 
-## Conceptual Analogy: The Robot Cartographer
-
-Imagine a diligent cartographer exploring uncharted territory. Our AutoVal SLAM system operates similarly:
-
-![The Autonomous Driving Orchestra](docs/diagrams/orchestra.svg)
-
--   **Sensors (Observational Tools)**: These are the robot's eyes and ears (LiDAR, Camera, etc.), gathering raw data about the environment – like a cartographer using a compass, sextant, and measuring tapes.
--   **Pyodide (The Cartographer's Brain)**: This is the intelligent core that processes sensor data, runs complex SLAM algorithms (localization, mapping, obstacle avoidance), and builds an internal representation of the world. It's where the raw observations are turned into a coherent map.
--   **JavaScript (The Atlas & Navigator's Interface)**: This is the interactive atlas and control panel. It visualizes the map being built, allows human interaction to set missions or adjust parameters, and displays the robot's progress and discoveries – like a living map that updates as the cartographer explores.
-
 ## Features and Enhancements
 
 This project has been significantly enhanced to provide a more interactive and comprehensive simulation environment:
